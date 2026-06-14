@@ -107,11 +107,12 @@ nixos_install = {
         "echo '<SSH_INITRD_KEY>' > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
         "echo '<ENCRYPTION_KEY>' > /tmp/nixtool-install-<HOSTNAME>/encryption.key",
         "chmod 600 /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/*",
-        "nix run github:nix-community/nixos-anywhere -- --extra-files '/tmp/nixtool-install-<HOSTNAME>/install' --disk-encryption-keys /tmp/encryption.key '/tmp/nixtool-install-<HOSTNAME>/encryption.key' --phases kexec,disko,install --no-substitute-on-destination --flake <FLAKEPATH>#<HOSTNAME> <SSH_TARGET>",
+        "sshpass -p '<SSH_PASSWORD>' nix run github:nix-community/nixos-anywhere -- --ssh-option \"UserKnownHostsFile=/dev/null\" --ssh-option \"GlobalKnownHostsFile=/dev/null\" --ssh-option \"StrictHostKeyChecking=no\" --extra-files '/tmp/nixtool-install-<HOSTNAME>/install' --disk-encryption-keys /tmp/encryption.key '/tmp/nixtool-install-<HOSTNAME>/encryption.key' --phases kexec,disko,install --no-substitute-on-destination --flake <FLAKEPATH>#<HOSTNAME> <SSH_TARGET>",
         "rm -rf /tmp/nixtool-install-<HOSTNAME>"
     ],
     "menu_variables": {
         "SSH_TARGET": {"title": "Enter SSH Target (root@ip)", "type": "text"},
+        "SSH_PASSWORD": {"title": "SSH Password", "type": "password"},
         "SSH_HOST_KEY": {"title": "Enter SSH Host Key", "type": "textarea"},
         "SSH_INITRD_KEY": {"title": "Enter SSH InitRD Host Key", "type": "textarea"},
         "ENCRYPTION_KEY": {"title": "Enter Disk Encryption Key", "type": "password"}
