@@ -99,6 +99,22 @@ run_all = {
     "run_on_remote": True
 }
 
+nixos_install = {
+    "name": "Install NixOS (Anywhere)",
+    "commands": [
+        "bash -c 'WORKDIR=$(mktemp -d); mkdir -p $WORKDIR/install/persistent/etc/ssh; echo \"<SSH_HOST_KEY>\" > $WORKDIR/install/persistent/etc/ssh/ssh_host_ed25519_key; echo \"<SSH_INITRD_KEY>\" > $WORKDIR/install/persistent/etc/ssh/ssh_initrd_host_ed25519_key; echo \"<ENCRYPTION_KEY>\" > $WORKDIR/encryption.key; chmod 600 $WORKDIR/install/persistent/etc/ssh/*; nix run github:nix-community/nixos-anywhere -- --extra-files \"$WORKDIR/install\" --disk-encryption-keys /tmp/encryption.key \"$WORKDIR/encryption.key\" --phases kexec,disko,install --no-substitute-on-destination --flake <FLAKEPATH>#<HOSTNAME> <SSH_ADDRESS>; rm -rf $WORKDIR'"
+    ],
+    "menu_variables": {
+        "SSH_ADDRESS": {"title": "Enter SSH Address (root@ip)", "type": "text"},
+        "SSH_HOST_KEY": {"title": "Enter SSH Host Key", "type": "text"},
+        "SSH_INITRD_KEY": {"title": "Enter SSH InitRD Host Key", "type": "text"},
+        "ENCRYPTION_KEY": {"title": "Enter Disk Encryption Key", "type": "password"}
+    },
+    # This command uses <HOSTNAME> and <SSH_ADDRESS>, and runs locally 
+    # to orchestrate the remote install.
+    "run_on_remote": False
+}
+
 all_commands = {
     "title": "Select a command",
     "commands": [
@@ -109,6 +125,7 @@ all_commands = {
         nix_preview_generations,
         nix_purge_generations,
         nix_purge_generations_gc,
+        nixos_install,
     ]
 }
 

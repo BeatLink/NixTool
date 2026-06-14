@@ -3,7 +3,8 @@ import json
 
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.widgets import Header, ContentSwitcher, Button
+from textual.widgets import Header, ContentSwitcher, Button, Label, Input
+from textual.containers import Vertical
 from textual.reactive import reactive
 
 from .theme import white_blue_theme
@@ -44,6 +45,19 @@ class NixOSManager(App):
         align: center middle;
         content-align: center middle;
     }
+
+    #input-menu {
+        align: center middle;
+        width: 100%;
+        height: 100%;
+    }
+
+    #variable-input {
+        width: 60%;
+        margin: 1 0;
+        border: round $primary;
+        background: transparent;
+    }
     """
     
     config = reactive({})
@@ -69,12 +83,18 @@ class NixOSManager(App):
         self.command_menu.title = all_commands.get("title", "Select a command")
         self.command_menu.options = all_commands.get("commands", [])
         self.variable_menu = OptionsWidget(id="variable-menu")
+        self.input_menu = Vertical(
+            Label(id="input-label"),
+            Input(id="variable-input"),
+            id="input-menu"
+        )
         self.host_selector = HostSelector(self.config_path, id="host-selector")
         self.command_runner = CommandRunner(id="command-runner")
         yield self.header
         with self.content_switcher:
             yield self.command_menu
             yield self.variable_menu
+            yield self.input_menu
             yield self.host_selector
             yield self.command_runner
 
@@ -115,10 +135,20 @@ class NixOSManager(App):
             for var_name, var_cfg in self.current_cmd["menu_variables"].items():
                 if var_name not in self.selected_vars:
                     self.current_var = var_name
-                    self.variable_menu.title = var_cfg.get("title", f"Select {var_name}")
-                    self.variable_menu.options = var_cfg.get("options", {})
-                    self.content_switcher.current = "variable-menu"
-                    self.variable_menu.focus()
+                    var_type = var_cfg.get("type", "list")
+                    
+                    if var_type == "list":
+                        self.variable_menu.title = var_cfg.get("title", f"Select {var_name}")
+                        self.variable_menu.options = var_cfg.get("options", {})
+                        self.content_switcher.current = "variable-menu"
+                        self.variable_menu.focus()
+                    else:
+                        self.query_one("#input-label", Label).update(var_cfg.get("title", f"Enter {var_name}"))
+                        field = self.query_one("#variable-input", Input)
+                        field.value = ""
+                        field.password = (var_type == "password")
+                        self.content_switcher.current = "input-menu"
+                        field.focus()
                     return
 
         needs_host = self.current_cmd.get("run_on_remote", False) or self.is_host_needed_recursive(self.current_cmd)
@@ -128,6 +158,11 @@ class NixOSManager(App):
             return
 
         self.prepare_command_queue()
+
+    @on(Input.Submitted, "#variable-input")
+    def on_input_submitted(self, event: Input.Submitted):
+        self.selected_vars[self.current_var] = event.value
+        self.check_next_step()
 
     def is_host_needed_recursive(self, cmd_dict):
         cmds = cmd_dict.get("commands", [])
