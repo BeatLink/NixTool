@@ -1,15 +1,19 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "technet-installer"
+name = "nixtool"
 version = "0.1.0"
-description = "Unified TUI for NixOS installation and disk formatting"
+description = "CLI tool for managing flake based NixOS installations"
+readme = "README.md"
+requires-python = ">=3.10"
 dependencies = [
-    "textual>=0.85.0",
+    "textual",
 ]
-requires-python = ">=3.11"
 
 [project.scripts]
-nixtool = "nixtool:run"
+nixtool = "nixtool.__main__:main"
 
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+[tool.setuptools.packages.find]
+where = ["."]
