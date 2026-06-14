@@ -2,77 +2,35 @@ import json
 import pathlib
 from textual import on
 from textual.app import ComposeResult
-from textual.message import Message
-from textual.containers import Container
-from textual.widget import Widget
-from textual.widgets import Label, OptionList
-from textual.widgets.option_list import Option
+from .options_widget import OptionsWidget
 
-HOST_TITLE = "Select Hosts"
-
-class HostSelector(Widget):
+class HostSelector(OptionsWidget):
     """A portable widget for selecting NixOS hosts from a configuration file."""
-
-    DEFAULT_CSS = """
-    HostSelector {
-        width: auto;
-        height: auto;
-    }
-    #container {
-        width: auto;
-        height: auto;
-    }
-    #label {
-        width: 100%;
-        height: auto;
-        text-align: center;
-        color: $primary;
-        text-style: bold;
-    }
-    #list {
-        width: auto;
-        height: auto;
-        margin: 0;
-        border: round $primary;
-        background: transparent;
-    }
-    """
-
-    class Selected(Message):
-        """Sent when a host is selected."""
-        def __init__(self, hostname: str, host_url: str) -> None:
-            super().__init__()
-            self.hostname = hostname
-            self.host_url = host_url
 
     def __init__(self, config_path: pathlib.Path, id: str | None = None) -> None:
         super().__init__(id=id)
         self.config_path = config_path
-
-    def compose(self) -> ComposeResult:
-        with Container(id="container"):
-            yield Label("Select Hosts", id="label")
-            yield OptionList(id="list")
-
-    def on_mount(self) -> None:
-        self.refresh_hosts()
+        self.title = "Select Hosts"
 
     def refresh_hosts(self) -> None:
         """Loads host data from config and populates the list."""
         try:
             config = json.loads(self.config_path.read_text())
-            hosts = {"All Hosts": "all"} | config.get("hosts", {})
-            option_list = self.query_one(OptionList)
-            option_list.clear_options()
-            for name, url in hosts.items():
-                option_list.add_option(Option(name, id=url))
+            # We set the reactive 'options' property, which triggers a recompose
+            self.options = {"All Hosts": "all"} | config.get("hosts", {})
         except Exception:
-            self.query_one(Label).update("Error loading hosts")
+            self.title = "Error loading hosts"
 
-    @on(OptionList.OptionSelected)
-    def _on_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.post_message(self.Selected(str(event.option.prompt), str(event.option.id)))
+    # We override the handler to translate OptionsWidget.Selected into HostSelector.Selected
+    # This keeps the main NixOSManager logic unchanged.
+    def on_options_widget_selected(self, event: OptionsWidget.Selected) -> None:
+        event.stop()
+        self.post_message(self.Selected(self, event.key, event.value))
 
-    def focus(self, scroll_visible: bool = True) -> Widget:
-        self.query_one(OptionList).focus()
-        return self
+    class Selected(OptionsWidget.Selected):
+        @property
+        def hostname(self) -> str:
+            return self.key
+        @property
+        def host_url(self) -> str:
+            return self.value
