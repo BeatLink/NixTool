@@ -3,6 +3,7 @@ import pathlib
 from textual import on
 from textual.app import ComposeResult
 from textual.message import Message
+from textual.containers import Container
 from textual.widget import Widget
 from textual.widgets import Label, OptionList
 from textual.widgets.option_list import Option
@@ -14,6 +15,10 @@ class HostSelector(Widget):
 
     DEFAULT_CSS = """
     HostSelector {
+        width: auto;
+        height: auto;
+    }
+    #container {
         width: auto;
         height: auto;
     }
@@ -45,8 +50,9 @@ class HostSelector(Widget):
         self.config_path = config_path
 
     def compose(self) -> ComposeResult:
-        yield Label("Select Hosts", id="label")
-        yield OptionList(id="list")
+        with Container(id="container"):
+            yield Label("Select Hosts", id="label")
+            yield OptionList(id="list")
 
     def on_mount(self) -> None:
         self.refresh_hosts()
@@ -65,7 +71,7 @@ class HostSelector(Widget):
 
     @on(OptionList.OptionSelected)
     def _on_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.post_message(self.Selected(event.option.prompt, str(event.option.id)))
+        self.post_message(self.Selected(str(event.option.prompt), str(event.option.id)))
 
     def focus(self, scroll_visible: bool = True) -> Widget:
         self.query_one(OptionList).focus()

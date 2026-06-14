@@ -53,7 +53,7 @@ class OptionsWidget(Widget):
                 elif isinstance(value, dict) and "name" in value:
                     options.append(Option(value["name"], id=key))
                 else:
-                    options.append(Option(key, id=value))
+                    options.append(Option(str(value), id=str(key)))
         elif isinstance(self.options, list):
             for index, item in enumerate(self.options):
                 if isinstance(item, dict) and "name" in item:
@@ -72,7 +72,7 @@ class OptionsWidget(Widget):
         self.post_message(
             self.Selected(
                 self,
-                event.option.prompt,
+                str(event.option.prompt),
                 str(event.option.id)
             )
         )
