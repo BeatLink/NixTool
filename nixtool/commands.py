@@ -56,7 +56,7 @@ nix_rebuild = {
 nix_preview_generations = {
     "name": "Preview Old Generations",
     "commands": [
-        'echo "---- <HOSTNAME> (system generations) ----"' && sudo nix-env --profile /nix/var/nix/profiles/system --list-generations && echo "---- <HOSTNAME> (user generations) ----" && nix-env --list-generations'
+        'echo "---- <HOSTNAME> (system generations) ----" && sudo nix-env --profile /nix/var/nix/profiles/system --list-generations && echo "---- <HOSTNAME> (user generations) ----" && nix-env --list-generations'
     ],
     "run_on_remote": True
 }
