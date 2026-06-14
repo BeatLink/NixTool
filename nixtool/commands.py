@@ -102,7 +102,13 @@ run_all = {
 nixos_install = {
     "name": "Install NixOS (Anywhere)",
     "commands": [
-        "bash -c 'WORKDIR=$(mktemp -d); mkdir -p $WORKDIR/install/persistent/etc/ssh; echo \"<SSH_HOST_KEY>\" > $WORKDIR/install/persistent/etc/ssh/ssh_host_ed25519_key; echo \"<SSH_INITRD_KEY>\" > $WORKDIR/install/persistent/etc/ssh/ssh_initrd_host_ed25519_key; echo \"<ENCRYPTION_KEY>\" > $WORKDIR/encryption.key; chmod 600 $WORKDIR/install/persistent/etc/ssh/*; nix run github:nix-community/nixos-anywhere -- --extra-files \"$WORKDIR/install\" --disk-encryption-keys /tmp/encryption.key \"$WORKDIR/encryption.key\" --phases kexec,disko,install --no-substitute-on-destination --flake <FLAKEPATH>#<HOSTNAME> <SSH_ADDRESS>; rm -rf $WORKDIR'"
+        "mkdir -p /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh",
+        "echo '<SSH_HOST_KEY>' > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_host_ed25519_key",
+        "echo '<SSH_INITRD_KEY>' > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
+        "echo '<ENCRYPTION_KEY>' > /tmp/nixtool-install-<HOSTNAME>/encryption.key",
+        "chmod 600 /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/*",
+        "nix run github:nix-community/nixos-anywhere -- --extra-files '/tmp/nixtool-install-<HOSTNAME>/install' --disk-encryption-keys /tmp/encryption.key '/tmp/nixtool-install-<HOSTNAME>/encryption.key' --phases kexec,disko,install --no-substitute-on-destination --flake <FLAKEPATH>#<HOSTNAME> <SSH_ADDRESS>",
+        "rm -rf /tmp/nixtool-install-<HOSTNAME>"
     ],
     "menu_variables": {
         "SSH_ADDRESS": {"title": "Enter SSH Address (root@ip)", "type": "text"},
