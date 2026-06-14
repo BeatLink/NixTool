@@ -10,6 +10,7 @@ from .theme import white_blue_theme
 from .command_runner import CommandRunner
 from .host_selector import HostSelector
 from .input_widget import InputWidget
+from .instructions_widget import InstructionsWidget
 from .options_widget import OptionsWidget
 from .commands import all_commands, HOST_TITLE
 
@@ -51,6 +52,7 @@ class NixOSManager(App):
     current_cmd = reactive({})
     selected_vars = reactive({})
     current_var = ""
+    instructions_shown = False
     host = {
         "hostname": "",
         "host_url": ""
@@ -71,6 +73,7 @@ class NixOSManager(App):
         self.command_menu.options = all_commands.get("commands", [])
         self.variable_menu = OptionsWidget(id="variable-menu")
         self.input_menu = InputWidget(id="input-menu")
+        self.instructions_menu = InstructionsWidget(id="instructions-menu")
         self.host_selector = HostSelector(self.config_path, id="host-selector")
         self.command_runner = CommandRunner(id="command-runner")
         yield self.header
@@ -78,6 +81,7 @@ class NixOSManager(App):
             yield self.command_menu
             yield self.variable_menu
             yield self.input_menu
+            yield self.instructions_menu
             yield self.host_selector
             yield self.command_runner
 
@@ -101,11 +105,17 @@ class NixOSManager(App):
         idx = int(selected.value)
         self.current_cmd = all_commands['commands'][idx]
         self.selected_vars = {}
+        self.instructions_shown = False
         self.check_next_step()
 
     @on(OptionsWidget.Selected, "#variable-menu")
     def process_variable(self, selected: OptionsWidget.Selected):
         self.selected_vars[self.current_var] = str(selected.value)
+        self.check_next_step()
+
+    @on(InstructionsWidget.Continued)
+    def on_instructions_continued(self, event: InstructionsWidget.Continued):
+        self.instructions_shown = True
         self.check_next_step()
 
     @on(HostSelector.Selected)
@@ -114,6 +124,11 @@ class NixOSManager(App):
         self.check_next_step()
 
     def check_next_step(self):
+        if "instructions" in self.current_cmd and not self.instructions_shown:
+            self.instructions_menu.setup(self.current_cmd["instructions"])
+            self.content_switcher.current = "instructions-menu"
+            return
+
         if "menu_variables" in self.current_cmd:
             for var_name, var_cfg in self.current_cmd["menu_variables"].items():
                 if var_name not in self.selected_vars:

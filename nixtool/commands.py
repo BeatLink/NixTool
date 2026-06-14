@@ -121,6 +121,33 @@ nixos_install = {
     "run_on_remote": False
 }
 
+format_data_drive = {
+    "name": "Format Data Drive (ZFS Storage)",
+    "instructions": """
+# Data Drive Format Instructions
+This command prepares a data drive for backup storage using **ZFS** on a **GPT** partition table.
+
+### ⚠️ DANGER
+*   The selected drive will be **erased and formatted in its entirety**.
+*   Ensure there is no important information on the drive before proceeding.
+*   This script MUST be run on the device in question.
+""",
+    "commands": [
+        "sudo sgdisk --zap-all <DATA_DRIVE>",
+        "sudo partprobe <DATA_DRIVE>",
+        "sudo sgdisk --new=1:0:0 --typecode=1:BF00 <DATA_DRIVE>",
+        "sudo partprobe <DATA_DRIVE>",
+        "sudo zpool destroy data-pool || true",
+        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on data-pool <DATA_DRIVE>1",
+        "echo '<PASSPHRASE>' | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool/storage"
+    ],
+    "menu_variables": {
+        "DATA_DRIVE": {"title": "Data Drive to Format (e.g. /dev/sdb)", "type": "text"},
+        "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"}
+    },
+    "run_on_remote": True
+}
+
 all_commands = {
     "title": "Select a command",
     "commands": [
@@ -132,6 +159,7 @@ all_commands = {
         nix_purge_generations,
         nix_purge_generations_gc,
         nixos_install,
+        format_data_drive,
     ]
 }
 
