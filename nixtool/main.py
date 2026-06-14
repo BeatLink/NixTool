@@ -106,29 +106,37 @@ class NixOSManager(App):
 
     @on(OptionsWidget.Selected, "#command-menu")
     def process_command(self, selected: OptionsWidget.Selected):
+        selected.stop()
         idx = int(selected.value)
         self.current_cmd = all_commands['commands'][idx]
         self.selected_vars = {}
         self.instructions_shown = False
+        self.current_var = ""
         self.check_next_step()
 
     @on(OptionsWidget.Selected, "#variable-menu")
     def process_variable(self, selected: OptionsWidget.Selected):
+        selected.stop()
         self.selected_vars[self.current_var] = str(selected.value)
+        self.current_var = ""
         self.check_next_step()
 
     @on(DiskSelector.Selected)
     def process_disk(self, selected: DiskSelector.Selected):
+        selected.stop()
         self.selected_vars[self.current_var] = str(selected.value)
+        self.current_var = ""
         self.check_next_step()
 
     @on(InstructionsWidget.Continued)
     def on_instructions_continued(self, event: InstructionsWidget.Continued):
+        event.stop()
         self.instructions_shown = True
         self.check_next_step()
 
     @on(HostSelector.Selected)
     def process_host(self, message: HostSelector.Selected):
+        message.stop()
         self.host = {"hostname": message.hostname, "host_url": message.host_url}
         self.check_next_step()
 
@@ -138,33 +146,33 @@ class NixOSManager(App):
             self.content_switcher.current = "instructions-menu"
             return
 
-        if "menu_variables" in self.current_cmd:
-            for var_name, var_cfg in self.current_cmd["menu_variables"].items():
-                if var_name not in self.selected_vars:
-                    self.current_var = var_name
-                    var_type = var_cfg.get("type", "list")
-                    
-                    if var_type == "list":
-                        self.variable_menu.title = var_cfg.get("title", f"Select {var_name}")
-                        self.variable_menu.options = var_cfg.get("options", {})
-                        self.content_switcher.current = "variable-menu"
-                        self.variable_menu.focus()
-                    elif var_type == "disk":
-                        self.disk_selector.title = var_cfg.get("title", "Select Disk")
-                        self.disk_selector.refresh_disks(allow_none=var_cfg.get("allow_none", False))
-                        self.content_switcher.current = "disk-selector"
-                        self.disk_selector.focus()
-                    elif var_type == "uuid":
-                        self.selected_vars[var_name] = str(uuid.uuid4())[:8]
-                        self.check_next_step()
-                        return
-                    else:
-                        self.input_menu.setup(
-                            var_cfg.get("title", f"Enter {var_name}"),
-                            is_password=(var_type == "password")
-                        )
-                        self.content_switcher.current = "input-menu"
+        all_vars = self.get_menu_variables_recursive(self.current_cmd)
+        for var_name, var_cfg in all_vars.items():
+            if var_name not in self.selected_vars:
+                self.current_var = var_name
+                var_type = var_cfg.get("type", "list")
+                
+                if var_type == "list":
+                    self.variable_menu.title = var_cfg.get("title", f"Select {var_name}")
+                    self.variable_menu.options = var_cfg.get("options", {})
+                    self.content_switcher.current = "variable-menu"
+                    self.variable_menu.focus()
+                elif var_type == "disk":
+                    self.disk_selector.title = var_cfg.get("title", "Select Disk")
+                    self.disk_selector.refresh_disks(allow_none=var_cfg.get("allow_none", False))
+                    self.content_switcher.current = "disk-selector"
+                    self.disk_selector.focus()
+                elif var_type == "uuid":
+                    self.selected_vars[var_name] = str(uuid.uuid4())[:8]
+                    self.check_next_step()
                     return
+                else:
+                    self.input_menu.setup(
+                        var_cfg.get("title", f"Enter {var_name}"),
+                        is_password=(var_type == "password")
+                    )
+                    self.content_switcher.current = "input-menu"
+                return
 
         needs_host = self.current_cmd.get("run_on_remote", False) or self.is_host_needed_recursive(self.current_cmd)
         if needs_host and not self.host["hostname"]:
@@ -174,9 +182,20 @@ class NixOSManager(App):
 
         self.prepare_command_queue()
 
+    def get_menu_variables_recursive(self, cmd_dict):
+        vars_dict = {}
+        if "menu_variables" in cmd_dict:
+            vars_dict.update(cmd_dict["menu_variables"])
+        for item in cmd_dict.get("commands", []):
+            if isinstance(item, dict):
+                vars_dict.update(self.get_menu_variables_recursive(item))
+        return vars_dict
+
     @on(InputWidget.Submitted)
     def on_input_submitted(self, event: InputWidget.Submitted):
+        event.stop()
         self.selected_vars[self.current_var] = event.value
+        self.current_var = ""
         self.check_next_step()
 
     def is_host_needed_recursive(self, cmd_dict):
