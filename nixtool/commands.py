@@ -136,6 +136,8 @@ This will spin up a **QEMU Virtual Machine** and attempt to run the partitioning
     "run_on_remote": False
 }
 
+# Inspired by https://github.com/danboid/creating-ZFS-disks-under-Linux/blob/master/README.md
+
 format_data_drive = {
     "name": "Format Data Drive (Native On-System)",
     "instructions": """
