@@ -121,6 +121,21 @@ nixos_install = {
     "run_on_remote": False
 }
 
+nixos_install_test = {
+    "name": "Test Installation (Isolated VM)",
+    "instructions": """
+# Installation VM Test
+This will spin up a **QEMU Virtual Machine** and attempt to run the partitioning and installation logic using your flake configuration.
+
+*   It does **not** touch your physical disks.
+*   It requires `disko` to be defined in your NixOS configuration.
+""",
+    "commands": [
+        "nix run github:nix-community/disko -- --mode disko --vm-test --flake <FLAKEPATH>#<HOSTNAME>"
+    ],
+    "run_on_remote": False
+}
+
 format_data_drive = {
     "name": "Format Data Drive (ZFS Storage)",
     "instructions": """
@@ -148,6 +163,52 @@ This command prepares a data drive for backup storage using **ZFS** on a **GPT**
     "run_on_remote": True
 }
 
+format_data_drive_vm_safe = {
+    "name": "Format Drive via Isolated VM (Ultra Safe)",
+    "instructions": """
+# Ultra-Safe VM Formatting
+This method launches a **NixOS VM** using QEMU and passes through your physical disk as the primary storage device.
+
+1. The VM will boot to a standard NixOS shell in your terminal.
+2. Your host system's disks are **completely invisible** to the VM.
+3. Once inside the VM, you can manually run your ZFS commands (e.g., `zpool create ...`).
+4. When finished, type `poweroff` inside the VM to return to NixTool.
+
+### ⚠️ WARNING
+Ensure you specify the correct `DATA_DRIVE` path. The VM will have full raw access to that specific device.
+""",
+    "commands": [
+        "bash -c 'nix run nixpkgs#qemu_kvm -- -enable-kvm -m 2G -smp 2 -nographic -kernel $(nix-build <nixpkgs/nixos> -A config.system.build.kernel --no-out-link)/bzImage -initrd $(nix-build <nixpkgs/nixos> -A config.system.build.initialRamdisk --no-out-link)/initrd -append \"console=ttyS0 boot.shell_on_fail\" -drive file=<DATA_DRIVE>,format=raw,if=virtio'"
+    ],
+    "menu_variables": {
+        "DATA_DRIVE": {"title": "Path to Disk (e.g. /dev/disk/by-id/...)", "type": "text"}
+    },
+    "run_on_remote": False
+}
+
+simulate_zfs_format = {
+    "name": "Simulate ZFS Format (Sandbox)",
+    "instructions": """
+# ZFS Sandbox Simulation
+This runs the formatting logic inside a **temporary 2GB file** located in `/tmp`.
+
+*   **Safe**: It does not touch physical disks.
+*   **Educational**: You can see how ZFS handles encryption and datasets.
+""",
+    "commands": [
+        "truncate -s 2G /tmp/nix-sandbox.img",
+        "sudo zpool create -f -m none sandbox-pool /tmp/nix-sandbox.img",
+        "echo '<PASSPHRASE>' | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o mountpoint=/tmp/sandbox-mnt sandbox-pool/storage",
+        "zpool status sandbox-pool",
+        "sudo zpool destroy sandbox-pool",
+        "rm /tmp/nix-sandbox.img"
+    ],
+    "menu_variables": {
+        "PASSPHRASE": {"title": "Test Passphrase", "type": "password"}
+    },
+    "run_on_remote": False
+}
+
 all_commands = {
     "title": "Select a command",
     "commands": [
@@ -159,7 +220,10 @@ all_commands = {
         nix_purge_generations,
         nix_purge_generations_gc,
         nixos_install,
+        nixos_install_test,
         format_data_drive,
+        format_data_drive_vm_safe,
+        simulate_zfs_format,
     ]
 }
 
