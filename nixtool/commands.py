@@ -139,14 +139,12 @@ This will spin up a **QEMU Virtual Machine** and attempt to run the partitioning
 format_data_drive = {
     "name": "Format Data Drive (Isolated VM)",
     "instructions": """
-# Isolated VM Formatting (Automated)
-This command launches a **NixOS VM** and passes through your physical disk. 
-The formatting logic is executed **inside the VM** to protect your host system.
+# Format Data Drive (ZFS on GPT)
 
-1. The VM boots using a generic NixOS kernel and initrd.
-2. Your disk `<DATA_DRIVE>` is attached as `/dev/vda`.
-3. The system waits for the VM to reach a shell and then pipes the formatting commands.
-4. The VM shuts down automatically upon completion.
+This command will format the specified drive to GPT and install a ZFS data pool for stateful data.
+
+To protect your system, this command launches **NixOS VM** and passes through your physical disk. 
+The formatting commands are then run inside the VM.
 
 ### ⚠️ WARNING
 Ensure you specify the correct `DATA_DRIVE` path. Data on that disk will be permanently erased.
