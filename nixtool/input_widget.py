@@ -15,9 +15,8 @@ class InputWidget(Widget):
         height: 100%;
     }
     #input-container {
-        align: center middle;
-        width: 100%;
-        height: 100%;
+        width: 60%;
+        height: auto;
     }
     #input-label {
         width: 100%;
@@ -27,7 +26,7 @@ class InputWidget(Widget):
         text-style: bold;
     }
     #variable-input {
-        width: 60%;
+        width: 100%;
         margin: 1 0;
         border: round $primary;
         background: transparent;
