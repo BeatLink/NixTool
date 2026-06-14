@@ -3,13 +3,13 @@ import json
 
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.widgets import Header, ContentSwitcher, Button, Label, Input
-from textual.containers import Vertical
+from textual.widgets import Header, ContentSwitcher, Button
 from textual.reactive import reactive
 
 from .theme import white_blue_theme
 from .command_runner import CommandRunner
 from .host_selector import HostSelector
+from .input_widget import InputWidget
 from .options_widget import OptionsWidget
 from .commands import all_commands, HOST_TITLE
 
@@ -45,19 +45,6 @@ class NixOSManager(App):
         align: center middle;
         content-align: center middle;
     }
-
-    #input-menu {
-        align: center middle;
-        width: 100%;
-        height: 100%;
-    }
-
-    #variable-input {
-        width: 60%;
-        margin: 1 0;
-        border: round $primary;
-        background: transparent;
-    }
     """
     
     config = reactive({})
@@ -83,11 +70,7 @@ class NixOSManager(App):
         self.command_menu.title = all_commands.get("title", "Select a command")
         self.command_menu.options = all_commands.get("commands", [])
         self.variable_menu = OptionsWidget(id="variable-menu")
-        self.input_menu = Vertical(
-            Label(id="input-label"),
-            Input(id="variable-input"),
-            id="input-menu"
-        )
+        self.input_menu = InputWidget(id="input-menu")
         self.host_selector = HostSelector(self.config_path, id="host-selector")
         self.command_runner = CommandRunner(id="command-runner")
         yield self.header
@@ -143,12 +126,11 @@ class NixOSManager(App):
                         self.content_switcher.current = "variable-menu"
                         self.variable_menu.focus()
                     else:
-                        self.query_one("#input-label", Label).update(var_cfg.get("title", f"Enter {var_name}"))
-                        field = self.query_one("#variable-input", Input)
-                        field.value = ""
-                        field.password = (var_type == "password")
+                        self.input_menu.setup(
+                            var_cfg.get("title", f"Enter {var_name}"),
+                            is_password=(var_type == "password")
+                        )
                         self.content_switcher.current = "input-menu"
-                        field.focus()
                     return
 
         needs_host = self.current_cmd.get("run_on_remote", False) or self.is_host_needed_recursive(self.current_cmd)
@@ -159,8 +141,8 @@ class NixOSManager(App):
 
         self.prepare_command_queue()
 
-    @on(Input.Submitted, "#variable-input")
-    def on_input_submitted(self, event: Input.Submitted):
+    @on(InputWidget.Submitted)
+    def on_input_submitted(self, event: InputWidget.Submitted):
         self.selected_vars[self.current_var] = event.value
         self.check_next_step()
 
