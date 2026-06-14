@@ -137,49 +137,56 @@ This will spin up a **QEMU Virtual Machine** and attempt to run the partitioning
 }
 
 format_data_drive = {
-    "name": "Format Data Drive (Isolated VM)",
+    "name": "Format Data Drive (Native On-System)",
     "instructions": """
 # Format Data Drive (ZFS on GPT)
 
-This command will format the specified drive to GPT and install a ZFS data pool for stateful data.
-
-To protect your system, this command launches **NixOS VM** and passes through your physical disk. 
-The formatting commands are then run inside the VM.
+This command will format the specified drive to GPT and install a ZFS data pool for stateful data directly on the host system.
 
 ### ⚠️ WARNING
 Ensure you specify the correct `DATA_DRIVE` path. Data on that disk will be permanently erased.
 """,
     "commands": [
-        "bash -c '(sleep 20; printf \"sgdisk --zap-all /dev/vda\\npartprobe /dev/vda\\nsgdisk --new=1:0:0 --typecode=1:BF00 /dev/vda\\npartprobe /dev/vda\\nzpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on data-pool /dev/vda1\\necho \\'<PASSPHRASE>\\' | zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool/storage\\npoweroff\\n\") | nix run nixpkgs#qemu_kvm -- -enable-kvm -m 2G -smp 2 -nographic -kernel $(nix-build <nixpkgs/nixos> -A config.system.build.kernel --no-out-link)/bzImage -initrd $(nix-build <nixpkgs/nixos> -A config.system.build.initialRamdisk --no-out-link)/initrd -append \"console=ttyS0 boot.shell_on_fail\" -drive file=<DATA_DRIVE>,format=raw,if=virtio'"
+        "bash -c '\n"
+        "DRIVE=\"<DATA_DRIVE>\"\n"
+        "PASSPHRASE=\"<PASSPHRASE>\"\n"
+        "UNIQUE_ID=$(printf \"%x\\n\" $(shuf -i 100000-999999 -n 1))\n"
+        "POOL_NAME=\"data-pool-${UNIQUE_ID}\"\n"
+        "\n"
+        "echo \"==> Zapping disk and creating partition table...\"\n"
+        "sgdisk --zap-all \"$DRIVE\"\n"
+        "partprobe \"$DRIVE\"\n"
+        "sgdisk --new=1:0:0 --typecode=1:BF00 \"$DRIVE\"\n"
+        "partprobe \"$DRIVE\"\n"
+        "\n"
+        "# Determine partition suffix (handles /dev/nvme0n1p1 vs /dev/sdb1)\n"
+        "if [[ \"$DRIVE\" =~ [0-9]$ ]]; then PART=\"${DRIVE}p1\"; else PART=\"${DRIVE}1\"; fi\n"
+        "\n"
+        "echo \"==> Creating ZFS pool: ${POOL_NAME}...\"\n"
+        "zpool create -f -d -m none \\\n"
+        "  -o feature@zstd_compress=enabled \\\n"
+        "  -o ashift=12 \\\n"
+        "  -o autotrim=on \\\n"
+        "  \"$POOL_NAME\" \"$PART\"\n"
+        "\n"
+        "echo \"==> Creating encrypted dataset...\"\n"
+        "echo \"$PASSPHRASE\" | zfs create \\\n"
+        "  -o encryption=on \\\n"
+        "  -o keyformat=passphrase \\\n"
+        "  -o keylocation=prompt \\\n"
+        "  -o xattr=sa \\\n"
+        "  -o acltype=posix \\\n"
+        "  -o relatime=on \\\n"
+        "  -o com.sun:auto-snapshot=true \\\n"
+        "  -o mountpoint=/Storage \\\n"
+        "  \"${POOL_NAME}/storage\"\n"
+        "'"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select Drive to Format", "type": "disk"},
         "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"}
     },
     "run_on_remote": True
-}
-
-simulate_zfs_format = {
-    "name": "Simulate ZFS Format (Sandbox)",
-    "instructions": """
-# ZFS Sandbox Simulation
-This runs the formatting logic inside a **temporary 2GB file** located in `/tmp`.
-
-*   **Safe**: It does not touch physical disks.
-*   **Educational**: You can see how ZFS handles encryption and datasets.
-""",
-    "commands": [
-        "truncate -s 2G /tmp/nix-sandbox.img",
-        "sudo zpool create -f -m none sandbox-pool /tmp/nix-sandbox.img",
-        "echo '<PASSPHRASE>' | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o mountpoint=/tmp/sandbox-mnt sandbox-pool/storage",
-        "zpool status sandbox-pool",
-        "sudo zpool destroy sandbox-pool",
-        "rm /tmp/nix-sandbox.img"
-    ],
-    "menu_variables": {
-        "PASSPHRASE": {"title": "Test Passphrase", "type": "password"}
-    },
-    "run_on_remote": False
 }
 
 all_commands = {
