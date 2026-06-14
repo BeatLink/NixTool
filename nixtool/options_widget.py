@@ -10,6 +10,9 @@ from textual.widgets.option_list import Option
 
 class OptionsWidget(Widget):
     DEFAULT_CSS = """
+        OptionsWidget {
+            align: center middle;
+        }
         #container {
             width: auto;
             height: auto;

@@ -12,13 +12,19 @@ class HostSelector(OptionsWidget):
         self.config_path = config_path
         self.title = "Select Hosts"
 
+    def on_mount(self) -> None:
+        self.refresh_hosts()
+
     def refresh_hosts(self) -> None:
         """Loads host data from config and populates the list."""
         try:
             config = json.loads(self.config_path.read_text())
-            # We set the reactive 'options' property, which triggers a recompose
-            self.options = {"All Hosts": "all"} | config.get("hosts", {})
+            hosts_data = {"All Hosts": "all"} | config.get("hosts", {})
+            # Invert the dict because OptionsWidget uses the value as the display prompt
+            # and the key as the internal ID.
+            self.options = {url: name for name, url in hosts_data.items()}
         except Exception:
+            self.options = {}
             self.title = "Error loading hosts"
 
     # We override the handler to translate OptionsWidget.Selected into HostSelector.Selected
