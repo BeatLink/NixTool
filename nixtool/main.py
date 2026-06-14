@@ -1,5 +1,6 @@
 import pathlib
 import json
+import uuid
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -153,6 +154,10 @@ class NixOSManager(App):
                         self.disk_selector.refresh_disks()
                         self.content_switcher.current = "disk-selector"
                         self.disk_selector.focus()
+                    elif var_type == "uuid":
+                        self.selected_vars[var_name] = str(uuid.uuid4())[:8]
+                        self.check_next_step()
+                        return
                     else:
                         self.input_menu.setup(
                             var_cfg.get("title", f"Enter {var_name}"),

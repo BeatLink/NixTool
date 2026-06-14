@@ -150,15 +150,13 @@ Ensure you specify the correct `DATA_DRIVE` path. Data on that disk will be perm
         "sudo sgdisk --zap-all <DATA_DRIVE>",
         "sudo sgdisk --new=1:0:0 --typecode=1:BF00 <DATA_DRIVE>",
         "sudo partprobe <DATA_DRIVE>",
-        "mkdir -p /tmp/nixtool-format-<HOSTNAME>",
-        "echo \"data-pool-<HOSTNAME>-$(cat /proc/sys/kernel/random/uuid | cut -c1-8)\" > /tmp/nixtool-format-<HOSTNAME>/pool_name",
-        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on $(cat /tmp/nixtool-format-<HOSTNAME>/pool_name) $(if [[ \"<DATA_DRIVE>\" =~ [0-9]$ ]]; then echo \"<DATA_DRIVE>p1\"; else echo \"<DATA_DRIVE>1\"; fi)",
-        "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage $(cat /tmp/nixtool-format-<HOSTNAME>/pool_name)/storage",
-        "rm -rf /tmp/nixtool-format-<HOSTNAME>"
+        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(if [[ \"<DATA_DRIVE>\" =~ [0-9]$ ]]; then echo \"<DATA_DRIVE>p1\"; else echo \"<DATA_DRIVE>1\"; fi)",
+        "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>-<POOL_UUID>/storage"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select Drive to Format", "type": "disk"},
-        "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"}
+        "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"},
+        "POOL_UUID": {"type": "uuid"}
     },
     "run_on_remote": True
 }
