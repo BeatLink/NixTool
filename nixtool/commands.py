@@ -112,8 +112,8 @@ nixos_install = {
     ],
     "menu_variables": {
         "SSH_TARGET": {"title": "Enter SSH Target (root@ip)", "type": "text"},
-        "SSH_HOST_KEY": {"title": "Enter SSH Host Key", "type": "text"},
-        "SSH_INITRD_KEY": {"title": "Enter SSH InitRD Host Key", "type": "text"},
+        "SSH_HOST_KEY": {"title": "Enter SSH Host Key", "type": "textarea"},
+        "SSH_INITRD_KEY": {"title": "Enter SSH InitRD Host Key", "type": "textarea"},
         "ENCRYPTION_KEY": {"title": "Enter Disk Encryption Key", "type": "password"}
     },
     # This command uses <HOSTNAME> and <SSH_ADDRESS>, and runs locally 

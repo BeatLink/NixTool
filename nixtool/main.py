@@ -106,6 +106,8 @@ class NixOSManager(App):
 
     @on(OptionsWidget.Selected, "#command-menu")
     def process_command(self, selected: OptionsWidget.Selected):
+        if self.content_switcher.current != "command-menu":
+            return
         selected.stop()
         idx = int(selected.value)
         self.current_cmd = all_commands['commands'][idx]
@@ -116,6 +118,8 @@ class NixOSManager(App):
 
     @on(OptionsWidget.Selected, "#variable-menu")
     def process_variable(self, selected: OptionsWidget.Selected):
+        if self.content_switcher.current != "variable-menu":
+            return
         selected.stop()
         self.selected_vars[self.current_var] = str(selected.value)
         self.current_var = ""
@@ -123,6 +127,8 @@ class NixOSManager(App):
 
     @on(DiskSelector.Selected)
     def process_disk(self, selected: DiskSelector.Selected):
+        if self.content_switcher.current != "disk-selector":
+            return
         selected.stop()
         self.selected_vars[self.current_var] = str(selected.value)
         self.current_var = ""
@@ -169,7 +175,8 @@ class NixOSManager(App):
                 else:
                     self.input_menu.setup(
                         var_cfg.get("title", f"Enter {var_name}"),
-                        is_password=(var_type == "password")
+                        is_password=(var_type == "password"),
+                        is_multiline=(var_type == "textarea")
                     )
                     self.content_switcher.current = "input-menu"
                 return
