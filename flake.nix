@@ -29,6 +29,7 @@
                     propagatedBuildInputs = [
                         python.pkgs.textual
                         pkgs.nh
+                        pkgs.sshpass
                     ];
                 };
 
@@ -41,6 +42,7 @@
                     buildInputs = [
                         (python.withPackages (ps: [ ps.textual ]))
                         pkgs.nh
+                        pkgs.sshpass
                     ];
                 };
             }
