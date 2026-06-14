@@ -121,23 +121,8 @@ nixos_install = {
     "run_on_remote": False
 }
 
-nixos_install_test = {
-    "name": "Test Installation (Isolated VM)",
-    "instructions": """
-# Installation VM Test
-This will spin up a **QEMU Virtual Machine** and attempt to run the partitioning and installation logic using your flake configuration.
-
-*   It does **not** touch your physical disks.
-*   It requires `disko` to be defined in your NixOS configuration.
-""",
-    "commands": [
-        "nix run github:nix-community/disko -- --mode disko --vm-test --flake <FLAKEPATH>#<HOSTNAME>"
-    ],
-    "run_on_remote": False
-}
 
 # Inspired by https://github.com/danboid/creating-ZFS-disks-under-Linux/blob/master/README.md
-
 format_data_drive = {
     "name": "Format Data Drive (ZFS on GPT)",
     "instructions": """
@@ -181,9 +166,7 @@ all_commands = {
         nix_purge_generations,
         nix_purge_generations_gc,
         nixos_install,
-        nixos_install_test,
         format_data_drive,
-        simulate_zfs_format,
     ]
 }
 
