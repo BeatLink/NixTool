@@ -137,53 +137,28 @@ This will spin up a **QEMU Virtual Machine** and attempt to run the partitioning
 }
 
 format_data_drive = {
-    "name": "Format Data Drive (ZFS Storage)",
+    "name": "Format Data Drive (Isolated VM)",
     "instructions": """
-# Data Drive Format Instructions
-This command prepares a data drive for backup storage using **ZFS** on a **GPT** partition table.
+# Isolated VM Formatting (Automated)
+This command launches a **NixOS VM** and passes through your physical disk. 
+The formatting logic is executed **inside the VM** to protect your host system.
 
-### ⚠️ DANGER
-*   The selected drive will be **erased and formatted in its entirety**.
-*   Ensure there is no important information on the drive before proceeding.
-*   This script MUST be run on the device in question.
+1. The VM boots using a generic NixOS kernel and initrd.
+2. Your disk `<DATA_DRIVE>` is attached as `/dev/vda`.
+3. The system waits for the VM to reach a shell and then pipes the formatting commands.
+4. The VM shuts down automatically upon completion.
+
+### ⚠️ WARNING
+Ensure you specify the correct `DATA_DRIVE` path. Data on that disk will be permanently erased.
 """,
     "commands": [
-        "sudo sgdisk --zap-all <DATA_DRIVE>",
-        "sudo partprobe <DATA_DRIVE>",
-        "sudo sgdisk --new=1:0:0 --typecode=1:BF00 <DATA_DRIVE>",
-        "sudo partprobe <DATA_DRIVE>",
-        "sudo zpool destroy data-pool || true",
-        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on data-pool <DATA_DRIVE>1",
-        "echo '<PASSPHRASE>' | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool/storage"
+        "bash -c '(sleep 20; printf \"sgdisk --zap-all /dev/vda\\npartprobe /dev/vda\\nsgdisk --new=1:0:0 --typecode=1:BF00 /dev/vda\\npartprobe /dev/vda\\nzpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on data-pool /dev/vda1\\necho \\'<PASSPHRASE>\\' | zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool/storage\\npoweroff\\n\") | nix run nixpkgs#qemu_kvm -- -enable-kvm -m 2G -smp 2 -nographic -kernel $(nix-build <nixpkgs/nixos> -A config.system.build.kernel --no-out-link)/bzImage -initrd $(nix-build <nixpkgs/nixos> -A config.system.build.initialRamdisk --no-out-link)/initrd -append \"console=ttyS0 boot.shell_on_fail\" -drive file=<DATA_DRIVE>,format=raw,if=virtio'"
     ],
     "menu_variables": {
-        "DATA_DRIVE": {"title": "Data Drive to Format (e.g. /dev/sdb)", "type": "text"},
+        "DATA_DRIVE": {"title": "Select Drive to Format", "type": "disk"},
         "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"}
     },
     "run_on_remote": True
-}
-
-format_data_drive_vm_safe = {
-    "name": "Format Drive via Isolated VM (Ultra Safe)",
-    "instructions": """
-# Ultra-Safe VM Formatting
-This method launches a **NixOS VM** using QEMU and passes through your physical disk as the primary storage device.
-
-1. The VM will boot to a standard NixOS shell in your terminal.
-2. Your host system's disks are **completely invisible** to the VM.
-3. Once inside the VM, you can manually run your ZFS commands (e.g., `zpool create ...`).
-4. When finished, type `poweroff` inside the VM to return to NixTool.
-
-### ⚠️ WARNING
-Ensure you specify the correct `DATA_DRIVE` path. The VM will have full raw access to that specific device.
-""",
-    "commands": [
-        "bash -c 'nix run nixpkgs#qemu_kvm -- -enable-kvm -m 2G -smp 2 -nographic -kernel $(nix-build <nixpkgs/nixos> -A config.system.build.kernel --no-out-link)/bzImage -initrd $(nix-build <nixpkgs/nixos> -A config.system.build.initialRamdisk --no-out-link)/initrd -append \"console=ttyS0 boot.shell_on_fail\" -drive file=<DATA_DRIVE>,format=raw,if=virtio'"
-    ],
-    "menu_variables": {
-        "DATA_DRIVE": {"title": "Path to Disk (e.g. /dev/disk/by-id/...)", "type": "text"}
-    },
-    "run_on_remote": False
 }
 
 simulate_zfs_format = {
@@ -222,7 +197,6 @@ all_commands = {
         nixos_install,
         nixos_install_test,
         format_data_drive,
-        format_data_drive_vm_safe,
         simulate_zfs_format,
     ]
 }

@@ -10,6 +10,7 @@ from .theme import white_blue_theme
 from .command_runner import CommandRunner
 from .host_selector import HostSelector
 from .input_widget import InputWidget
+from .disk_selector import DiskSelector
 from .instructions_widget import InstructionsWidget
 from .options_widget import OptionsWidget
 from .commands import all_commands, HOST_TITLE
@@ -74,6 +75,7 @@ class NixOSManager(App):
         self.variable_menu = OptionsWidget(id="variable-menu")
         self.input_menu = InputWidget(id="input-menu")
         self.instructions_menu = InstructionsWidget(id="instructions-menu")
+        self.disk_selector = DiskSelector(id="disk-selector")
         self.host_selector = HostSelector(self.config_path, id="host-selector")
         self.command_runner = CommandRunner(id="command-runner")
         yield self.header
@@ -82,6 +84,7 @@ class NixOSManager(App):
             yield self.variable_menu
             yield self.input_menu
             yield self.instructions_menu
+            yield self.disk_selector
             yield self.host_selector
             yield self.command_runner
 
@@ -113,6 +116,11 @@ class NixOSManager(App):
         self.selected_vars[self.current_var] = str(selected.value)
         self.check_next_step()
 
+    @on(DiskSelector.Selected)
+    def process_disk(self, selected: DiskSelector.Selected):
+        self.selected_vars[self.current_var] = str(selected.value)
+        self.check_next_step()
+
     @on(InstructionsWidget.Continued)
     def on_instructions_continued(self, event: InstructionsWidget.Continued):
         self.instructions_shown = True
@@ -140,6 +148,11 @@ class NixOSManager(App):
                         self.variable_menu.options = var_cfg.get("options", {})
                         self.content_switcher.current = "variable-menu"
                         self.variable_menu.focus()
+                    elif var_type == "disk":
+                        self.disk_selector.title = var_cfg.get("title", "Select Disk")
+                        self.disk_selector.refresh_disks()
+                        self.content_switcher.current = "disk-selector"
+                        self.disk_selector.focus()
                     else:
                         self.input_menu.setup(
                             var_cfg.get("title", f"Enter {var_name}"),
