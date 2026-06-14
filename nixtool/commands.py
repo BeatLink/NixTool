@@ -147,40 +147,11 @@ This command will format the specified drive to GPT and install a ZFS data pool 
 Ensure you specify the correct `DATA_DRIVE` path. Data on that disk will be permanently erased.
 """,
     "commands": [
-        "bash -c '\n"
-        "DRIVE=\"<DATA_DRIVE>\"\n"
-        "PASSPHRASE=\"<PASSPHRASE>\"\n"
-        "UNIQUE_ID=$(printf \"%x\\n\" $(shuf -i 100000-999999 -n 1))\n"
-        "POOL_NAME=\"data-pool-${UNIQUE_ID}\"\n"
-        "\n"
-        "echo \"==> Zapping disk and creating partition table...\"\n"
-        "sgdisk --zap-all \"$DRIVE\"\n"
-        "partprobe \"$DRIVE\"\n"
-        "sgdisk --new=1:0:0 --typecode=1:BF00 \"$DRIVE\"\n"
-        "partprobe \"$DRIVE\"\n"
-        "\n"
-        "# Determine partition suffix (handles /dev/nvme0n1p1 vs /dev/sdb1)\n"
-        "if [[ \"$DRIVE\" =~ [0-9]$ ]]; then PART=\"${DRIVE}p1\"; else PART=\"${DRIVE}1\"; fi\n"
-        "\n"
-        "echo \"==> Creating ZFS pool: ${POOL_NAME}...\"\n"
-        "zpool create -f -d -m none \\\n"
-        "  -o feature@zstd_compress=enabled \\\n"
-        "  -o ashift=12 \\\n"
-        "  -o autotrim=on \\\n"
-        "  \"$POOL_NAME\" \"$PART\"\n"
-        "\n"
-        "echo \"==> Creating encrypted dataset...\"\n"
-        "echo \"$PASSPHRASE\" | zfs create \\\n"
-        "  -o encryption=on \\\n"
-        "  -o keyformat=passphrase \\\n"
-        "  -o keylocation=prompt \\\n"
-        "  -o xattr=sa \\\n"
-        "  -o acltype=posix \\\n"
-        "  -o relatime=on \\\n"
-        "  -o com.sun:auto-snapshot=true \\\n"
-        "  -o mountpoint=/Storage \\\n"
-        "  \"${POOL_NAME}/storage\"\n"
-        "'"
+        "sudo sgdisk --zap-all <DATA_DRIVE>",
+        "sudo sgdisk --new=1:0:0 --typecode=1:BF00 <DATA_DRIVE>",
+        "sudo partprobe <DATA_DRIVE>",
+        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on data-pool-<HOSTNAME> $(if [[ \"<DATA_DRIVE>\" =~ [0-9]$ ]]; then echo \"<DATA_DRIVE>p1\"; else echo \"<DATA_DRIVE>1\"; fi)",
+        "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select Drive to Format", "type": "disk"},
