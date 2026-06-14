@@ -155,15 +155,15 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
         "sudo sgdisk --zap-all <DATA_DRIVE>",
         "sudo sgdisk --new=1:0:0 --typecode=1:BF00 <DATA_DRIVE>",
         "sudo partprobe <DATA_DRIVE>",
-        "if [ -n \"<MIRROR_DRIVE>\" ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE>; fi",
+        "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE>; fi",
         "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(if [[ \"<DATA_DRIVE>\" =~ [0-9]$ ]]; then echo \"<DATA_DRIVE>p1\"; else echo \"<DATA_DRIVE>1\"; fi)",
         "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
         "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>-<POOL_UUID>/storage",
-        "if [ -n \"<MIRROR_DRIVE>\" ]; then sudo zpool attach data-pool-<HOSTNAME>-<POOL_UUID> $(if [[ \"<DATA_DRIVE>\" =~ [0-9]$ ]]; then echo \"<DATA_DRIVE>p1\"; else echo \"<DATA_DRIVE>1\"; fi) $(if [[ \"<MIRROR_DRIVE>\" =~ [0-9]$ ]]; then echo \"<MIRROR_DRIVE>p1\"; else echo \"<MIRROR_DRIVE>1\"; fi); fi"
+        "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo zpool attach data-pool-<HOSTNAME>-<POOL_UUID> $(if [[ \"<DATA_DRIVE>\" =~ [0-9]$ ]]; then echo \"<DATA_DRIVE>p1\"; else echo \"<DATA_DRIVE>1\"; fi) $(if [[ \"<MIRROR_DRIVE>\" =~ [0-9]$ ]]; then echo \"<MIRROR_DRIVE>p1\"; else echo \"<MIRROR_DRIVE>1\"; fi); fi"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select Drive to Format", "type": "disk"},
-        "MIRROR_DRIVE": {"title": "Secondary Mirror Drive (Leave blank for none)", "type": "text"},
+        "MIRROR_DRIVE": {"title": "Select Secondary Mirror Drive", "type": "disk", "allow_none": True},
         "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"},
         "POOL_UUID": {"type": "uuid"}
     },

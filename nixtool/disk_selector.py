@@ -12,9 +12,13 @@ class DiskSelector(OptionsWidget):
     def on_mount(self) -> None:
         self.refresh_disks()
 
-    def refresh_disks(self) -> None:
+    def refresh_disks(self, allow_none: bool = False) -> None:
         """Queries lsblk and populates the options list."""
         try:
+            drives = {}
+            if allow_none:
+                drives["none"] = "-- None / Skip --"
+
             # -d: skip holders, -n: no headings, -o: output columns
             result = subprocess.run(
                 ["lsblk", "-dn", "-o", "NAME,SIZE,MODEL"], 
@@ -22,8 +26,6 @@ class DiskSelector(OptionsWidget):
                 text=True, 
                 check=True
             )
-            
-            drives = {}
             for line in result.stdout.strip().split('\n'):
                 parts = line.split(None, 2)
                 if len(parts) >= 2:

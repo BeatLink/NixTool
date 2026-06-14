@@ -151,7 +151,7 @@ class NixOSManager(App):
                         self.variable_menu.focus()
                     elif var_type == "disk":
                         self.disk_selector.title = var_cfg.get("title", "Select Disk")
-                        self.disk_selector.refresh_disks()
+                        self.disk_selector.refresh_disks(allow_none=var_cfg.get("allow_none", False))
                         self.content_switcher.current = "disk-selector"
                         self.disk_selector.focus()
                     elif var_type == "uuid":
