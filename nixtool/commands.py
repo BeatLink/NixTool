@@ -141,13 +141,13 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
 """,
     "commands": [
         "sudo sgdisk --zap-all <DATA_DRIVE>",
-        "sudo sgdisk --new=1:0:0 --typecode=1:BF00 <DATA_DRIVE>",
-        "sudo partprobe <DATA_DRIVE>",
-        "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE>; fi",
-        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -o ashift=12 -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(if [[ \"<DATA_DRIVE>\" =~ [0-9]$ ]]; then echo \"<DATA_DRIVE>p1\"; else echo \"<DATA_DRIVE>1\"; fi)",
+        "sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <DATA_DRIVE>",
+        "sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
+        "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE> && sudo udevadm settle; fi",
+        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -O compression=zstd -O com.sun:auto-snapshot=false -o ashift=12 -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|')",
         "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
-        "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>-<POOL_UUID>/storage",
-        "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo zpool attach data-pool-<HOSTNAME>-<POOL_UUID> $(if [[ \"<DATA_DRIVE>\" =~ [0-9]$ ]]; then echo \"<DATA_DRIVE>p1\"; else echo \"<DATA_DRIVE>1\"; fi) $(if [[ \"<MIRROR_DRIVE>\" =~ [0-9]$ ]]; then echo \"<MIRROR_DRIVE>p1\"; else echo \"<MIRROR_DRIVE>1\"; fi); fi"
+        "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage",
+        "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo zpool attach data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|') $(lsblk -rno NAME <MIRROR_DRIVE> | sed -n 2p | sed 's|^|/dev/|'); fi"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select Drive to Format", "type": "disk"},
@@ -158,8 +158,56 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
     "run_on_remote": True
 }
 
-all_commands = {
-    "title": "Select a command",
+# Inspired by https://github.com/danboid/creating-ZFS-disks-under-Linux/blob/master/README.md
+format_sd_card_phone = {
+    "name": "Format SD Card for Phone (TowBoot + ZFS)",
+    "instructions": """
+# Format SD Card for Phone (TowBoot + ZFS)
+
+This command formats and prepares an SD Card to store TowBoot as well as the
+backup files and other stateful information for a PinePhone.
+
+The drive will consist of a GPT partition table containing the TowBoot image
+(partition 1) and an encrypted ZFS data storage pool (partition 2).
+
+### ⚠️ WARNING
+The selected drive will be erased and formatted in its entirety. Double-check
+your device path to ensure there is no important information on the drive.
+""",
+    "commands": [
+        # Wipe the partition table
+        "sudo sgdisk --zap-all <DATA_DRIVE> && sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
+        # Wipe any residual TowBoot content
+        "sudo dd if=/dev/zero of=<DATA_DRIVE> bs=32k seek=4 count=1 && sync",
+        # Download and extract TowBoot into a temporary workdir, then flash it
+        "WORKDIR=$(mktemp -d) && cd \"$WORKDIR\" && "
+        "wget https://github.com/Tow-Boot/Tow-Boot/releases/download/release-<TOWBOOT_VERSION>/pine64-pinephoneA64-<TOWBOOT_VERSION>.tar.xz && "
+        "tar -xvf pine64-pinephoneA64-<TOWBOOT_VERSION>.tar.xz && "
+        "sudo dd if=pine64-pinephoneA64-<TOWBOOT_VERSION>/shared.disk-image.img of=<DATA_DRIVE> bs=1M oflag=direct,sync status=progress && "
+        "rm -rf \"$WORKDIR\"",
+        # Expand the GPT partition table to the rest of the SD Card
+        "echo \"write\" | sudo sfdisk --append <DATA_DRIVE>",
+        # Create the ZFS partition (partition 2)
+        "sudo sgdisk --new=2:0:0 --typecode=2:BF00 --change-name=2:zfs-data-partition <DATA_DRIVE> && sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
+        # Create the ZFS pool on partition 2 (the second child partition)
+        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -O compression=zstd -O com.sun:auto-snapshot=false -o ashift=12 -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 3p | sed 's|^|/dev/|')",
+        "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
+        # Create the encrypted storage dataset
+        "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage"
+    ],
+    "menu_variables": {
+        "DATA_DRIVE": {"title": "Select SD Card to Format", "type": "disk"},
+        "TOWBOOT_VERSION": {"title": "TowBoot Version", "type": "text"},
+        "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"},
+        "POOL_UUID": {"type": "uuid"}
+    },
+    "run_on_remote": True
+}
+
+maintenance_commands = {
+    "name": "Maintenance",
+    "title": "Select a maintenance command",
+    "category": True,
     "commands": [
         run_all,
         nix_flake_update,
@@ -168,8 +216,25 @@ all_commands = {
         nix_preview_generations,
         nix_purge_generations,
         nix_purge_generations_gc,
+    ]
+}
+
+install_commands = {
+    "name": "Installation & Formatting",
+    "title": "Select an installation or formatting command",
+    "category": True,
+    "commands": [
         nixos_install,
         format_data_drive,
+        format_sd_card_phone,
+    ]
+}
+
+all_commands = {
+    "title": "Select a category",
+    "commands": [
+        maintenance_commands,
+        install_commands,
     ]
 }
 

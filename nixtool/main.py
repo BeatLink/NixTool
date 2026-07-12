@@ -52,6 +52,7 @@ class NixOSManager(App):
     
     config = reactive({})
     current_cmd = reactive({})
+    current_category = None
     selected_vars = reactive({})
     current_var = ""
     instructions_shown = False
@@ -117,7 +118,20 @@ class NixOSManager(App):
             return
         selected.stop()
         idx = int(selected.value)
-        self.current_cmd = all_commands['commands'][idx]
+        # The menu is either showing the top-level categories or the commands
+        # within a category the user has drilled into.
+        source = self.current_category if self.current_category else all_commands
+        chosen = source['commands'][idx]
+
+        if chosen.get("category"):
+            # Drill into the category: repopulate the same menu with its commands.
+            self.current_category = chosen
+            self.command_menu.title = chosen.get("title", "Select a command")
+            self.command_menu.options = chosen.get("commands", [])
+            self.command_menu.focus()
+            return
+
+        self.current_cmd = chosen
         self.selected_vars = {}
         self.instructions_shown = False
         self.current_var = ""
@@ -264,11 +278,15 @@ class NixOSManager(App):
     @on(Button.Pressed, "#return")
     def reset(self, event: Button.Pressed):
         self.current_cmd = {}
+        self.current_category = None
         self.selected_vars = {}
         self.host = {
             "hostname": "",
             "host_url": ""
         }
         self.command_queue = []
+        # Return to the top-level category menu.
+        self.command_menu.title = all_commands.get("title", "Select a category")
+        self.command_menu.options = all_commands.get("commands", [])
         self.content_switcher.current = "command-menu"
         self.command_menu.focus()
