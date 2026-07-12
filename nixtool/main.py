@@ -102,6 +102,13 @@ class NixOSManager(App):
     async def load_config(self):
         if self.config_path.exists():
             self.config = json.loads(self.config_path.read_text())
+        else:
+            self.notify(
+                f"Config file not found: {self.config_path}",
+                title="Warning",
+                severity="warning",
+                timeout=10,
+            )
         self.content_switcher.loading = False
 
     @on(OptionsWidget.Selected, "#command-menu")

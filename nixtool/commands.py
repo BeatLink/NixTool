@@ -11,6 +11,8 @@ nix_flake_update = {
 
 def get_dconf_commands(flake_path):
     queue = []
+    if not flake_path:
+        return ["echo 'No flake_path configured; cannot locate dconf targets.'"]
     flake_root = pathlib.Path(flake_path)
     for config_path in flake_root.rglob("dconf-settings.json"):
         try:
