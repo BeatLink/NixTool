@@ -144,7 +144,7 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
         "sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <DATA_DRIVE>",
         "sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
         "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE> && sudo udevadm settle; fi",
-        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -O compression=zstd -O com.sun:auto-snapshot=false -o ashift=12 -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|')",
+        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -O compression=zstd -O com.sun:auto-snapshot=false -o ashift=12 -o dedup=on -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|')",
         "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
         "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage",
         "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo zpool attach data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|') $(lsblk -rno NAME <MIRROR_DRIVE> | sed -n 2p | sed 's|^|/dev/|'); fi"
@@ -190,7 +190,7 @@ your device path to ensure there is no important information on the drive.
         # Create the ZFS partition (partition 2)
         "sudo sgdisk --new=2:0:0 --typecode=2:BF00 --change-name=2:zfs-data-partition <DATA_DRIVE> && sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
         # Create the ZFS pool on partition 2 (the second child partition)
-        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -O compression=zstd -O com.sun:auto-snapshot=false -o ashift=12 -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 3p | sed 's|^|/dev/|')",
+        "sudo zpool create -f -d -m none -o feature@zstd_compress=enabled -O compression=zstd -O dedup=on -O com.sun:auto-snapshot=false -o ashift=12 -o autotrim=on data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 3p | sed 's|^|/dev/|')",
         "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
         # Create the encrypted storage dataset
         "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage"
