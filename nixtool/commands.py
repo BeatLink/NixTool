@@ -204,6 +204,13 @@ your device path to ensure there is no important information on the drive.
     "run_on_remote": True
 }
 
+nix_inspect = {
+    "name": "Inspect Nix Config (nix-inspect)",
+    "command": "nix run github:bluskript/nix-inspect --",
+    "interactive": True,
+    "run_on_remote": False
+}
+
 maintenance_commands = {
     "name": "Maintenance",
     "title": "Select a maintenance command",
@@ -216,6 +223,7 @@ maintenance_commands = {
         nix_preview_generations,
         nix_purge_generations,
         nix_purge_generations_gc,
+        nix_inspect,
     ]
 }
 

@@ -1,5 +1,6 @@
 import pathlib
 import json
+import subprocess
 import uuid
 
 from textual import on, work
@@ -131,11 +132,23 @@ class NixOSManager(App):
             self.command_menu.focus()
             return
 
+        if chosen.get("interactive"):
+            self.launch_interactive(chosen)
+            return
+
         self.current_cmd = chosen
         self.selected_vars = {}
         self.instructions_shown = False
         self.current_var = ""
         self.check_next_step()
+
+    def launch_interactive(self, cmd_dict):
+        with self.suspend():
+            subprocess.run(
+                cmd_dict["command"],
+                shell=True,
+                cwd=self.config.get("flake_path"),
+            )
 
     @on(OptionsWidget.Selected, "#variable-menu")
     def process_variable(self, selected: OptionsWidget.Selected):
