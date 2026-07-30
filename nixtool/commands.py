@@ -2,7 +2,9 @@ import pathlib
 import json
 
 nix_flake_update = {
+    "id": "flake-update",
     "name": "Run Nix Flake Update",
+    "description": "Refresh all flake inputs to their latest revisions.",
     "commands": [
         "nix flake update --refresh"
     ],
@@ -26,7 +28,9 @@ def get_dconf_commands(flake_path):
     return queue if queue else ["echo 'No localized dconf targets found.'"]
 
 export_dconf = {
+    "id": "export-dconf",
     "name": "Export Dconf Settings",
+    "description": "Dump dconf paths listed in dconf-settings.json files into the flake.",
     "commands": [
         get_dconf_commands
     ],
@@ -34,7 +38,9 @@ export_dconf = {
 }
 
 nix_rebuild = {
+    "id": "rebuild",
     "name": "Run Nixos Rebuild",
+    "description": "Build and activate a host configuration from the flake.",
     "commands": [
         "nixos-rebuild --sudo --no-reexec --show-trace --flake <FLAKEPATH>#<HOSTNAME> --target-host <USER>@<HOSTURL> <ACTION>"
     ],
@@ -56,7 +62,9 @@ nix_rebuild = {
 }
 
 nix_preview_generations = {
+    "id": "preview-generations",
     "name": "Preview Old Generations",
+    "description": "List system and user generations without deleting anything.",
     "commands": [
         'echo "---- <HOSTNAME> (system generations) ----" && sudo nix-env --profile /nix/var/nix/profiles/system --list-generations && echo "---- <HOSTNAME> (user generations) ----" && nix-env --list-generations'
     ],
@@ -64,7 +72,10 @@ nix_preview_generations = {
 }
 
 nix_purge_generations = {
+    "id": "purge-generations",
     "name": "Remove Old Generations",
+    "description": "Delete all but the current system and user generations.",
+    "destructive": True,
     "commands": [
         "sudo nix-env --profile /nix/var/nix/profiles/system --delete-generations old",
         "nix-env --delete-generations old"
@@ -73,7 +84,10 @@ nix_purge_generations = {
 }
 
 nix_gc = {
+    "id": "garbage-collect",
     "name": "Run Garbage Collection",
+    "description": "Delete unreachable store paths.",
+    "destructive": True,
     "commands": [
         "sudo nix-collect-garbage -d"
     ],
@@ -81,7 +95,10 @@ nix_gc = {
 }
 
 nix_purge_generations_gc = {
+    "id": "purge-generations-gc",
     "name": "Remove Old Generations & GC",
+    "description": "Preview generations, delete old ones, then garbage collect.",
+    "destructive": True,
     "commands": [
         nix_preview_generations,
         nix_purge_generations,
@@ -90,7 +107,10 @@ nix_purge_generations_gc = {
 }
 
 run_all = {
+    "id": "run-all",
     "name": "Run All Tasks",
+    "description": "Flake update, rebuild, then prune generations and garbage collect.",
+    "destructive": True,
     "commands": [
         nix_flake_update,
         nix_rebuild,
@@ -102,7 +122,10 @@ run_all = {
 }
 
 nixos_install = {
+    "id": "install-nixos",
     "name": "Install NixOS (Anywhere)",
+    "description": "Provision a host over SSH with nixos-anywhere, wiping its disks.",
+    "destructive": True,
     "commands": [
         "mkdir -p /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh",
         "echo '<SSH_HOST_KEY>' > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_host_ed25519_key",
@@ -127,7 +150,10 @@ nixos_install = {
 
 # Inspired by https://github.com/danboid/creating-ZFS-disks-under-Linux/blob/master/README.md
 format_data_drive = {
+    "id": "format-data-drive",
     "name": "Format Data Drive (ZFS on GPT)",
+    "description": "Wipe a drive and create an encrypted ZFS data pool, optionally mirrored.",
+    "destructive": True,
     "instructions": """
 # Format Data Drive (ZFS on GPT)
 
@@ -160,7 +186,10 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
 
 # Inspired by https://github.com/danboid/creating-ZFS-disks-under-Linux/blob/master/README.md
 format_sd_card_phone = {
+    "id": "format-sd-card",
     "name": "Format SD Card for Phone (TowBoot + ZFS)",
+    "description": "Wipe an SD card, flash TowBoot, and create an encrypted ZFS pool.",
+    "destructive": True,
     "instructions": """
 # Format SD Card for Phone (TowBoot + ZFS)
 
@@ -205,13 +234,16 @@ your device path to ensure there is no important information on the drive.
 }
 
 nix_inspect = {
+    "id": "inspect",
     "name": "Inspect Nix Config (nix-inspect)",
+    "description": "Launch the nix-inspect TUI against the configured flake.",
     "command": "nix run github:bluskript/nix-inspect --",
     "interactive": True,
     "run_on_remote": False
 }
 
 maintenance_commands = {
+    "id": "maintenance",
     "name": "Maintenance",
     "title": "Select a maintenance command",
     "category": True,
@@ -222,12 +254,14 @@ maintenance_commands = {
         nix_rebuild,
         nix_preview_generations,
         nix_purge_generations,
+        nix_gc,
         nix_purge_generations_gc,
         nix_inspect,
     ]
 }
 
 install_commands = {
+    "id": "install",
     "name": "Installation & Formatting",
     "title": "Select an installation or formatting command",
     "category": True,

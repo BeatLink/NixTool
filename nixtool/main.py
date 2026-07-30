@@ -8,6 +8,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Header, ContentSwitcher, Button
 from textual.reactive import reactive
 
+from . import config as config_mod
 from .theme import white_blue_theme
 from .command_runner import CommandRunner
 from .host_selector import HostSelector
@@ -65,7 +66,13 @@ class NixOSManager(App):
 
     def __init__(self, config_path: pathlib.Path = None):
         super().__init__()
-        self.config_path = config_path or pathlib.Path.cwd() / "nixtool-config.json"
+        # Fall back to the same search path the CLI uses, so both front ends
+        # find the same config regardless of how nixtool was launched.
+        self.config_path = (
+            config_path
+            or config_mod.resolve_config_path()
+            or pathlib.Path.cwd() / config_mod.CONFIG_FILENAME
+        )
 
     def compose(self) -> ComposeResult:
         self.header = Header(show_clock=True)
