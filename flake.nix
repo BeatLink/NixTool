@@ -40,7 +40,11 @@
 
                 devShells.default = pkgs.mkShell {
                     buildInputs = [
-                        (python.withPackages (ps: [ ps.textual ]))
+                        (python.withPackages (ps: [
+                            ps.textual
+                            ps.pytest
+                            ps.pytest-asyncio
+                        ]))
                         pkgs.nh
                         pkgs.sshpass
                     ];

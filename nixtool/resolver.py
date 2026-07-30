@@ -5,6 +5,7 @@ substitution rules without an app instance, so the logic lives here and both
 front ends call it.
 """
 
+import shlex
 import uuid
 
 from . import registry
@@ -47,7 +48,15 @@ def validate_choice(name: str, spec: dict, value: str) -> None:
 
 
 def resolve_placeholders(text: str, config: dict, hostname: str | None, values: dict) -> str:
-    """Substitute <FLAKEPATH>, <HOSTNAME>, <USER>, <HOSTURL> and variables."""
+    """Substitute <FLAKEPATH>, <HOSTNAME>, <USER>, <HOSTURL> and variables.
+
+    Every substituted value is shell-quoted. Placeholders are expanded into
+    strings that are handed to ``sh -c``, so an unquoted value containing a
+    quote, space, ``$`` or ``;`` would either break the command or execute
+    attacker-chosen shell. Quoting each value independently is still correct
+    inside composite words: ``<FLAKEPATH>#<HOSTNAME>`` becomes ``'/f'#'alpha'``,
+    which the shell concatenates back to ``/f#alpha``.
+    """
     host_map = config.get("hosts", {}) if isinstance(config.get("hosts"), dict) else {}
     replacements = {
         "<FLAKEPATH>": config.get("flake_path", ""),
@@ -58,8 +67,17 @@ def resolve_placeholders(text: str, config: dict, hostname: str | None, values: 
     for key, value in values.items():
         replacements[f"<{key}>"] = value
     for key, value in replacements.items():
-        text = text.replace(key, str(value))
+        text = text.replace(key, shell_quote(str(value)))
     return text
+
+
+def shell_quote(value: str) -> str:
+    """Quote a value for safe interpolation into a shell command.
+
+    ``shlex.quote`` leaves values it considers safe bare, which keeps the
+    common case (``switch``, ``/dev/sdb``) readable in the plan preview.
+    """
+    return shlex.quote(value)
 
 
 def resolve_command(node: dict, config: dict, hostname: str | None, values: dict) -> list[str]:

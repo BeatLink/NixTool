@@ -1,5 +1,6 @@
-import pathlib
 import json
+import pathlib
+import shlex
 
 nix_flake_update = {
     "id": "flake-update",
@@ -19,12 +20,17 @@ def get_dconf_commands(flake_path):
     for config_path in flake_root.rglob("dconf-settings.json"):
         try:
             data = json.loads(config_path.read_text())
-            for dconf_path in data.get("dconf_exports", []):
-                output_name = f"{dconf_path.strip('/').replace('/', '.')}.dconf"
-                target_file = (config_path.parent / output_name).relative_to(flake_root)
-                queue.append(f"dconf dump {dconf_path} > ./{target_file}")
-        except Exception as e:
-            queue.append(f"echo 'Error processing {config_path.name}: {str(e)}'")
+        except (OSError, json.JSONDecodeError) as exc:
+            # Surfaced as a step rather than raised: one unreadable file should
+            # not stop the other exports, and the message lands in the log.
+            queue.append(f"echo {shlex.quote(f'Error processing {config_path}: {exc}')}")
+            continue
+        for dconf_path in data.get("dconf_exports", []):
+            output_name = f"{dconf_path.strip('/').replace('/', '.')}.dconf"
+            target_file = (config_path.parent / output_name).relative_to(flake_root)
+            queue.append(
+                f"dconf dump {shlex.quote(dconf_path)} > ./{shlex.quote(str(target_file))}"
+            )
     return queue if queue else ["echo 'No localized dconf targets found.'"]
 
 export_dconf = {
@@ -126,13 +132,17 @@ nixos_install = {
     "name": "Install NixOS (Anywhere)",
     "description": "Provision a host over SSH with nixos-anywhere, wiping its disks.",
     "destructive": True,
+    # Secrets are written with `printf %s` into a directory created mode 700,
+    # never with `echo` into a world-readable path: the keys must not be
+    # readable by other local users for the window between write and chmod.
     "commands": [
-        "mkdir -p /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh",
-        "echo '<SSH_HOST_KEY>' > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_host_ed25519_key",
-        "echo '<SSH_INITRD_KEY>' > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
-        "echo '<ENCRYPTION_KEY>' > /tmp/nixtool-install-<HOSTNAME>/encryption.key",
-        "chmod 600 /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/*",
-        "SSHPASS='<SSH_PASSWORD>' nix run github:nix-community/nixos-anywhere -- --env-password --ssh-option \"UserKnownHostsFile=/dev/null\" --ssh-option \"GlobalKnownHostsFile=/dev/null\" --ssh-option \"StrictHostKeyChecking=no\" --extra-files '/tmp/nixtool-install-<HOSTNAME>/install' --disk-encryption-keys /tmp/encryption.key '/tmp/nixtool-install-<HOSTNAME>/encryption.key' --phases kexec,disko,install --no-substitute-on-destination --flake <FLAKEPATH>#<HOSTNAME> <SSH_TARGET>",
+        "rm -rf /tmp/nixtool-install-<HOSTNAME>",
+        "mkdir -m 700 -p /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh",
+        "printf '%s' <SSH_HOST_KEY> > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_host_ed25519_key",
+        "printf '%s' <SSH_INITRD_KEY> > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
+        "printf '%s' <ENCRYPTION_KEY> > /tmp/nixtool-install-<HOSTNAME>/encryption.key",
+        "chmod 600 /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/* /tmp/nixtool-install-<HOSTNAME>/encryption.key",
+        "SSHPASS=<SSH_PASSWORD> nix run github:nix-community/nixos-anywhere -- --env-password --ssh-option \"UserKnownHostsFile=/dev/null\" --ssh-option \"GlobalKnownHostsFile=/dev/null\" --ssh-option \"StrictHostKeyChecking=no\" --extra-files /tmp/nixtool-install-<HOSTNAME>/install --disk-encryption-keys /tmp/encryption.key /tmp/nixtool-install-<HOSTNAME>/encryption.key --phases kexec,disko,install --no-substitute-on-destination --flake <FLAKEPATH>#<HOSTNAME> <SSH_TARGET>",
         "rm -rf /tmp/nixtool-install-<HOSTNAME>"
     ],
     "menu_variables": {
@@ -169,11 +179,11 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
         "sudo sgdisk --zap-all <DATA_DRIVE>",
         "sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <DATA_DRIVE>",
         "sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
-        "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE> && sudo udevadm settle; fi",
+        "if [ <MIRROR_DRIVE> != none ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE> && sudo udevadm settle; fi",
         "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|')",
         "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
-        "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage",
-        "if [ \"<MIRROR_DRIVE>\" != \"none\" ]; then sudo zpool attach data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|') $(lsblk -rno NAME <MIRROR_DRIVE> | sed -n 2p | sed 's|^|/dev/|'); fi"
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage",
+        "if [ <MIRROR_DRIVE> != none ]; then sudo zpool attach data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|') $(lsblk -rno NAME <MIRROR_DRIVE> | sed -n 2p | sed 's|^|/dev/|'); fi"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select Drive to Format", "type": "disk"},
@@ -222,7 +232,7 @@ your device path to ensure there is no important information on the drive.
         "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 3p | sed 's|^|/dev/|')",
         "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
         # Create the encrypted storage dataset
-        "echo \"<PASSPHRASE>\" | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage"
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select SD Card to Format", "type": "disk"},
@@ -279,5 +289,3 @@ all_commands = {
         install_commands,
     ]
 }
-
-HOST_TITLE = "Select Hosts"

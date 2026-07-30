@@ -12,7 +12,6 @@ import sys
 
 from . import config as config_mod
 from . import executor, registry, resolver, secrets
-from .commands import all_commands
 
 EXIT_OK = 0
 EXIT_ERROR = 1

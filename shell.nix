@@ -17,6 +17,8 @@ pkgs.mkShell {
         # Python environment and venv automation
         python3
         python3Packages.textual
+        python3Packages.pytest
+        python3Packages.pytest-asyncio
         python3Packages.venvShellHook
     ];
 
