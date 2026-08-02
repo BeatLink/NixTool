@@ -50,5 +50,13 @@
                     ];
                 };
             }
-        );
+        )
+        // {
+            # System-independent, so it lives outside eachDefaultSystem. The module
+            # takes `self` so its default package tracks this flake's own build.
+            nixosModules = rec {
+                nixtool = import ./module.nix self;
+                default = nixtool;
+            };
+        };
 }

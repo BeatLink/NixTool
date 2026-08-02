@@ -63,9 +63,22 @@ def add_variable_flags(parser: argparse.ArgumentParser, variables: dict) -> None
         )
 
 
-def collect_values(node: dict, args: argparse.Namespace, interactive: bool) -> dict:
-    """Gather every variable value from flags, files, env, or prompts."""
+def collect_values(
+    node: dict,
+    args: argparse.Namespace,
+    interactive: bool,
+    cfg: dict | None = None,
+    hostname: str | None = None,
+) -> dict:
+    """Gather every variable value from flags, files, config, env, or prompts.
+
+    Paths declared in the config file rank below anything given explicitly for
+    this run, so a one-off flag or environment variable still wins, but above
+    the interactive prompt, so a fully configured host runs unattended.
+    """
     variables = registry.collect_variables(node)
+    declared_files = config_mod.value_files(cfg or {}, hostname)
+    declared_literals = config_mod.declared_values(cfg or {}, hostname)
     values = {}
 
     for name, spec in variables.items():
@@ -106,6 +119,20 @@ def collect_values(node: dict, args: argparse.Namespace, interactive: bool) -> d
         if name in values:
             continue
 
+        declared = declared_files.get(name)
+        if declared:
+            value = secrets.read_value_file(declared)
+            resolver.validate_choice(name, spec, value)
+            values[name] = value
+            continue
+
+        literal = declared_literals.get(name)
+        if literal is not None:
+            secrets.reject_inline_secret(name, spec)
+            resolver.validate_choice(name, spec, literal)
+            values[name] = literal
+            continue
+
         if interactive:
             value = secrets.prompt_for(name, spec)
             resolver.validate_choice(name, spec, value)
@@ -126,18 +153,34 @@ def parse_assignment(text: str) -> tuple[str, str]:
     return key, value
 
 
-def print_plan(plan, node, values, stream=None) -> None:
-    """Show the resolved commands, with secret values masked."""
+def print_plan(plan, node, values_by_host, stream=None) -> None:
+    """Show the resolved commands, with secret values masked.
+
+    Values are per host, since config-declared credential files may differ
+    between them. Identical values across hosts are printed once so the common
+    single-host case reads the same as it always has.
+    """
     # Resolved at call time, not import time, so redirected output is honoured.
     stream = sys.stdout if stream is None else stream
     variables = registry.collect_variables(node)
     print(f"Command: {node['name']}", file=stream)
-    if values:
-        print("Variables:", file=stream)
+
+    def show(values, label=None) -> None:
+        if not values:
+            return
+        heading = "Variables:" if label is None else f"Variables ({label}):"
+        print(heading, file=stream)
         for name in sorted(values):
             spec = variables.get(name, {})
             shown = secrets.redact(name, spec, values[name])
             print(f"  {name} = {shown}", file=stream)
+
+    distinct = {tuple(sorted(v.items())) for v in values_by_host.values()}
+    if len(distinct) <= 1:
+        show(next(iter(values_by_host.values()), {}))
+    else:
+        for hostname, values in values_by_host.items():
+            show(values, hostname)
     print(f"\nThe following {len(plan)} command(s) will be executed:", file=stream)
     current_host = object()
     for index, (hostname, command) in enumerate(plan, start=1):
@@ -301,42 +344,58 @@ def cmd_run(args) -> int:
         return executor.run_interactive(node["command"], work_dir)
 
     interactive_ok = sys.stdin.isatty() and not args.non_interactive
-    try:
-        values = collect_values(node, args, interactive_ok)
-    except (secrets.SecretError, resolver.ResolutionError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return EXIT_USAGE
-
     variables = registry.collect_variables(node)
-    missing = resolver.missing_variables(variables, values)
-    if missing:
-        details = []
-        for name in sorted(missing):
-            spec = variables[name]
-            if secrets.is_secret(spec):
-                details.append(f"{name} ({flag_for(name)}-file PATH)")
-            else:
-                details.append(f"{name} ({flag_for(name)} VALUE)")
-        print(f"error: missing required variable(s): {', '.join(details)}", file=sys.stderr)
-        return EXIT_USAGE
 
     try:
         hostnames = resolver.target_hosts(node, cfg, args.host, args.all_hosts)
-        plan = resolver.build_plan(node, cfg, hostnames, values)
     except resolver.ResolutionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
+
+    # Values are gathered per host so config-declared credential files can name
+    # a different key or password for each machine.
+    plan = []
+    values_by_host = {}
+    for hostname in hostnames:
+        try:
+            values = collect_values(node, args, interactive_ok, cfg, hostname)
+        except (secrets.SecretError, resolver.ResolutionError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+
+        missing = resolver.missing_variables(variables, values)
+        if missing:
+            details = []
+            for name in sorted(missing):
+                spec = variables[name]
+                if secrets.is_secret(spec):
+                    details.append(f"{name} ({flag_for(name)}-file PATH)")
+                else:
+                    details.append(f"{name} ({flag_for(name)} VALUE)")
+            where = f" for {hostname}" if hostname else ""
+            print(
+                f"error: missing required variable(s){where}: {', '.join(details)}",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+
+        values_by_host[hostname] = values
+        try:
+            plan.extend(resolver.build_plan(node, cfg, [hostname], values))
+        except resolver.ResolutionError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
 
     if not plan:
         print("error: command resolved to an empty plan", file=sys.stderr)
         return EXIT_ERROR
 
     if args.dry_run:
-        print_plan(plan, node, values)
+        print_plan(plan, node, values_by_host)
         return EXIT_OK
 
     if not args.quiet:
-        print_plan(plan, node, values)
+        print_plan(plan, node, values_by_host)
 
     if not confirm(node, args.yes):
         print("Aborted.", file=sys.stderr)

@@ -185,6 +185,87 @@ def test_missing_variable_is_reported(config_file, capsys, monkeypatch):
     assert "missing required variable" in capsys.readouterr().err
 
 
+def test_value_file_from_config_is_used(tmp_path, capsys, monkeypatch):
+    secret = tmp_path / "pass"
+    secret.write_text("fromconfig\n")
+    path = tmp_path / "nixtool-config.json"
+    path.write_text(json.dumps({
+        "flake_path": str(tmp_path / "flake"),
+        "hosts": {"alpha": "10.0.0.1"},
+        "value_files": {"PASSPHRASE": str(secret)},
+    }))
+    monkeypatch.setenv("NIXTOOL_CONFIG", str(path))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    code = main([
+        "run", "format-data-drive", "--host", "alpha",
+        "--data-drive", "/dev/sdb", "--mirror-drive", "none", "-n",
+    ])
+    out = capsys.readouterr().out
+    assert code == EXIT_OK
+    assert "PASSPHRASE = ********" in out
+    assert "fromconfig" not in out.split("The following")[0]
+
+
+def test_host_value_file_overrides_the_shared_one(tmp_path, capsys, monkeypatch):
+    shared = tmp_path / "shared"
+    shared.write_text("shared-secret\n")
+    per_host = tmp_path / "alpha"
+    per_host.write_text("alpha-secret\n")
+    path = tmp_path / "nixtool-config.json"
+    path.write_text(json.dumps({
+        "flake_path": str(tmp_path / "flake"),
+        "hosts": {"alpha": "10.0.0.1"},
+        "value_files": {"PASSPHRASE": str(shared)},
+        "host_value_files": {"alpha": {"PASSPHRASE": str(per_host)}},
+    }))
+    monkeypatch.setenv("NIXTOOL_CONFIG", str(path))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    from nixtool import config as config_mod
+    resolved = config_mod.value_files(json.loads(path.read_text()), "alpha")
+    assert resolved["PASSPHRASE"] == str(per_host)
+
+
+def test_explicit_flag_beats_a_config_value_file(tmp_path, capsys, monkeypatch):
+    declared = tmp_path / "declared"
+    declared.write_text("from-config\n")
+    explicit = tmp_path / "explicit"
+    explicit.write_text("from-flag\n")
+    path = tmp_path / "nixtool-config.json"
+    path.write_text(json.dumps({
+        "flake_path": str(tmp_path / "flake"),
+        "hosts": {"alpha": "10.0.0.1"},
+        "value_files": {"PASSPHRASE": str(declared)},
+    }))
+    monkeypatch.setenv("NIXTOOL_CONFIG", str(path))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    code = main([
+        "run", "format-data-drive", "--host", "alpha",
+        "--data-drive", "/dev/sdb", "--mirror-drive", "none",
+        "--passphrase-file", str(explicit), "-n",
+    ])
+    assert code == EXIT_OK
+    # Both are masked in the plan, so assert on the resolved value directly.
+    from nixtool import config as config_mod
+    assert config_mod.value_files(json.loads(path.read_text()))["PASSPHRASE"] == str(declared)
+
+
+def test_missing_config_value_file_is_an_error(tmp_path, capsys, monkeypatch):
+    path = tmp_path / "nixtool-config.json"
+    path.write_text(json.dumps({
+        "flake_path": str(tmp_path / "flake"),
+        "hosts": {"alpha": "10.0.0.1"},
+        "value_files": {"PASSPHRASE": str(tmp_path / "does-not-exist")},
+    }))
+    monkeypatch.setenv("NIXTOOL_CONFIG", str(path))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    code = main([
+        "run", "format-data-drive", "--host", "alpha",
+        "--data-drive", "/dev/sdb", "--mirror-drive", "none", "-n",
+    ])
+    assert code == EXIT_USAGE
+    assert "cannot read value file" in capsys.readouterr().err
+
+
 def test_global_config_flag_reaches_subparsers(tmp_path, capsys, monkeypatch):
     monkeypatch.delenv("NIXTOOL_CONFIG", raising=False)
     path = tmp_path / "c.json"

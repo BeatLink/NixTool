@@ -66,3 +66,46 @@ def hosts(config: dict) -> dict:
     """The configured hostname -> URL mapping."""
     value = config.get("hosts", {})
     return value if isinstance(value, dict) else {}
+
+
+def value_files(config: dict, hostname: str | None = None) -> dict:
+    """Variable name -> path of a file holding that variable's value.
+
+    Declaring these in the config keeps credentials out of both the command line
+    and the environment: nixtool reads the file at run time, so the config only
+    ever names a path. That path is typically a sops-nix secret under
+    ``/run/secrets``, which lets a NixOS module own the credentials for an
+    install while the config file stays free of plaintext.
+
+    ``value_files`` applies to every host; ``host_value_files.<hostname>``
+    overrides it per host, so a shared SSH password can sit alongside a
+    per-machine disk encryption key.
+    """
+    return _merged(config, "value_files", "host_value_files", hostname)
+
+
+def declared_values(config: dict, hostname: str | None = None) -> dict:
+    """Variable name -> literal value, from the config file.
+
+    For non-secret variables only, such as the SSH target of an install. A
+    secret named here is refused by the caller rather than silently honoured,
+    because the config file is not an encrypted store: putting a passphrase in
+    it would defeat the point of naming a path in ``value_files`` instead.
+
+    ``values`` applies to every host; ``host_values.<hostname>`` overrides it.
+    """
+    return _merged(config, "values", "host_values", hostname)
+
+
+def _merged(config: dict, shared_key: str, host_key: str, hostname: str | None) -> dict:
+    """A shared string mapping overlaid with its per-host counterpart."""
+    resolved = {}
+    shared = config.get(shared_key)
+    if isinstance(shared, dict):
+        resolved.update({k: v for k, v in shared.items() if isinstance(v, str)})
+    per_host = config.get(host_key)
+    if hostname and isinstance(per_host, dict):
+        entry = per_host.get(hostname)
+        if isinstance(entry, dict):
+            resolved.update({k: v for k, v in entry.items() if isinstance(v, str)})
+    return resolved
