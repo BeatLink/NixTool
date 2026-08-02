@@ -158,6 +158,65 @@ nixos_install = {
 }
 
 
+nixos_install_local = {
+    "id": "install-local",
+    "name": "Install NixOS (Local Disk)",
+    "description": "Install onto a disk attached to this machine, for targets that cannot be installed over SSH.",
+    "destructive": True,
+    "instructions": """
+# Install NixOS (Local Disk)
+
+Installs a host onto a block device attached to **this** machine, rather than
+over SSH. Use this when the target cannot run `nixos-anywhere` — a phone exposed
+over USB mass storage, a drive in a dock, or any device whose own OS lacks
+`kexec`.
+
+The host's disko configuration names the disk it will have once installed, which
+is not the path it appears at while attached here. That device is overridden for
+the partitioning step only; the system that gets installed is built from the
+unmodified configuration, so it still refers to its own disk at runtime.
+
+It then seeds `/persistent/etc/ssh` with the host keys, so the installed system
+comes up with the identity it is expected to have, and runs `nixos-install`.
+
+### ⚠️ WARNING
+The selected disk is erased in its entirety. Check the device path carefully —
+it is a disk on this machine, so a wrong path destroys local data.
+""",
+    "commands": [
+        "rm -rf /tmp/nixtool-local-<HOSTNAME>",
+        "mkdir -m 700 -p /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh",
+        "printf '%s' <SSH_HOST_KEY> > /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_host_ed25519_key",
+        "printf '%s' <SSH_INITRD_KEY> > /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
+        # disko reads the passphrase from this exact path, named by keylocation in
+        # the host's zfs dataset options, so it cannot live under the temp dir.
+        "printf '%s' <ENCRYPTION_KEY> > /tmp/encryption.key",
+        "chmod 600 /tmp/encryption.key /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_host_ed25519_key /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
+        # mkForce because the host config already defines the device; extendModules
+        # layers onto the real configuration rather than replacing it, so the rest
+        # of the layout is untouched.
+        "sudo \"$(nix build --impure --no-link --print-out-paths --expr '((builtins.getFlake \"<FLAKEPATH>\").nixosConfigurations.\"<HOSTNAME>\".extendModules { modules = [ ({ lib, ... }: { disko.devices.disk.root-drive.device = lib.mkForce \"<TARGET_DISK>\"; }) ]; }).config.system.build.diskoScript')\"",
+        "sudo mkdir -p /mnt/persistent/etc/ssh",
+        "sudo cp -a /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/. /mnt/persistent/etc/ssh/",
+        "sudo chmod 600 /mnt/persistent/etc/ssh/ssh_host_ed25519_key /mnt/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
+        "sudo nixos-install --root /mnt --flake <FLAKEPATH>#<HOSTNAME> --no-root-passwd",
+        "sudo umount -R /mnt || true",
+        # By name, never `export -a`: this machine has its own pools imported and
+        # exporting them would unmount the running system's storage.
+        "sudo zpool export root-pool-<HOSTNAME> || true",
+        "rm -rf /tmp/nixtool-local-<HOSTNAME> /tmp/encryption.key"
+    ],
+    "menu_variables": {
+        "TARGET_DISK": {"title": "Target Disk (as attached to this machine)", "type": "disk"},
+        "SSH_HOST_KEY": {"title": "Enter SSH Host Key", "type": "textarea"},
+        "SSH_INITRD_KEY": {"title": "Enter SSH InitRD Host Key", "type": "textarea"},
+        "ENCRYPTION_KEY": {"title": "Enter Disk Encryption Key", "type": "password"}
+    },
+    # Uses <HOSTNAME> to pick the configuration, but every command runs here.
+    "run_on_remote": False
+}
+
+
 # Inspired by https://github.com/danboid/creating-ZFS-disks-under-Linux/blob/master/README.md
 format_data_drive = {
     "id": "format-data-drive",
@@ -277,6 +336,7 @@ install_commands = {
     "category": True,
     "commands": [
         nixos_install,
+        nixos_install_local,
         format_data_drive,
         format_sd_card_phone,
     ]
