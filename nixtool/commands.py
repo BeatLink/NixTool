@@ -192,14 +192,30 @@ it is a disk on this machine, so a wrong path destroys local data.
         # the host's zfs dataset options, so it cannot live under the temp dir.
         "printf '%s' <ENCRYPTION_KEY> > /tmp/encryption.key",
         "chmod 600 /tmp/encryption.key /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_host_ed25519_key /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
-        # mkForce because the host config already defines the device; extendModules
-        # layers onto the real configuration rather than replacing it, so the rest
-        # of the layout is untouched.
-        "sudo \"$(nix build --impure --no-link --print-out-paths --expr '((builtins.getFlake \"<FLAKEPATH>\").nixosConfigurations.\"<HOSTNAME>\".extendModules { modules = [ ({ lib, ... }: { disko.devices.disk.root-drive.device = lib.mkForce \"<TARGET_DISK>\"; }) ]; }).config.system.build.diskoScript')\"",
+        # Build the whole system BEFORE touching the disk. Building can take hours
+        # when the target is a foreign architecture, and anything attached over
+        # USB may not survive that long -- a dropped disk mid-build suspends the
+        # pool and loses the work. Doing it first means the disk is only needed
+        # for the copy, and a retry after a disconnect reuses everything here.
+        "nix build --no-link --print-out-paths <FLAKEPATH>#nixosConfigurations.<HOSTNAME>.config.system.build.toplevel",
+        # Two overrides, both mkForce because the host config already defines them.
+        #
+        # The device, because the target disk is attached here, not where the host
+        # will find it once installed.
+        #
+        # hostPlatform, because the partitioning runs on THIS machine. Built from
+        # the host's own platform the script carries the host's binaries, and a
+        # foreign-architecture `zpool` under binfmt aborts: it issues ioctls to the
+        # running kernel's ZFS module across an ABI it does not match. The layout
+        # itself is architecture-independent, so only the tools change.
+        "sudo \"$(nix build --impure --no-link --print-out-paths --expr '((builtins.getFlake \"<FLAKEPATH>\").nixosConfigurations.\"<HOSTNAME>\".extendModules { modules = [ ({ lib, ... }: { nixpkgs.hostPlatform = lib.mkForce builtins.currentSystem; disko.devices.disk.root-drive.device = lib.mkForce \"<TARGET_DISK>\"; }) ]; }).config.system.build.diskoScript')\"",
         "sudo mkdir -p /mnt/persistent/etc/ssh",
         "sudo cp -a /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/. /mnt/persistent/etc/ssh/",
         "sudo chmod 600 /mnt/persistent/etc/ssh/ssh_host_ed25519_key /mnt/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
-        "sudo nixos-install --root /mnt --flake <FLAKEPATH>#<HOSTNAME> --no-root-passwd",
+        # --system rather than --flake: the closure was built above, so this is a
+        # copy and a bootloader install with no evaluation or compilation left to
+        # do while the disk has to stay attached.
+        "sudo nixos-install --root /mnt --no-root-passwd --system \"$(nix build --no-link --print-out-paths <FLAKEPATH>#nixosConfigurations.<HOSTNAME>.config.system.build.toplevel)\"",
         "sudo umount -R /mnt || true",
         # By name, never `export -a`: this machine has its own pools imported and
         # exporting them would unmount the running system's storage.
