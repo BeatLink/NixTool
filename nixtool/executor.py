@@ -1,5 +1,6 @@
 """Headless execution of a resolved command plan."""
 
+import os
 import subprocess
 import sys
 
@@ -25,12 +26,17 @@ def run_plan(
     stream=None,
     quiet: bool = False,
     keep_going: bool = False,
+    env_by_host=None,
 ) -> ExecutionResult:
     """Run ``(hostname, command)`` pairs in order.
 
     Stops at the first failure unless ``keep_going`` is set, mirroring the TUI's
     behaviour of aborting a queue when a step fails. Output is streamed as it
     arrives so long-running builds show progress.
+
+    ``env_by_host`` maps a hostname to the secret environment its commands were
+    resolved against; the values live here rather than in the command string so
+    they stay out of ``ps`` and out of the printed plan.
     """
     # Resolved at call time, not import time, so redirected output is honoured.
     stream = sys.stdout if stream is None else stream
@@ -42,6 +48,7 @@ def run_plan(
             label = f" [{hostname}]" if hostname else ""
             print(f"\n>>> [{index}/{result.total}]{label} {command}", file=stream, flush=True)
 
+        secret_env = (env_by_host or {}).get(hostname) or {}
         process = subprocess.Popen(
             command,
             shell=True,
@@ -49,6 +56,7 @@ def run_plan(
             stdout=None if quiet else subprocess.PIPE,
             stderr=None if quiet else subprocess.STDOUT,
             text=True,
+            env={**os.environ, **secret_env} if secret_env else None,
         )
         if process.stdout is not None:
             for line in process.stdout:

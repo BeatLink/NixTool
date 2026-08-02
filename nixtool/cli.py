@@ -356,6 +356,8 @@ def cmd_run(args) -> int:
     # a different key or password for each machine.
     plan = []
     values_by_host = {}
+    env_by_host = {}
+    secret_names = resolver.secret_names(variables)
     for hostname in hostnames:
         try:
             values = collect_values(node, args, interactive_ok, cfg, hostname)
@@ -380,8 +382,9 @@ def cmd_run(args) -> int:
             return EXIT_USAGE
 
         values_by_host[hostname] = values
+        env_by_host[hostname] = resolver.secret_environment(variables, values)
         try:
-            plan.extend(resolver.build_plan(node, cfg, [hostname], values))
+            plan.extend(resolver.build_plan(node, cfg, [hostname], values, secret_names))
         except resolver.ResolutionError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_USAGE
@@ -406,6 +409,7 @@ def cmd_run(args) -> int:
         work_dir=work_dir,
         quiet=args.quiet,
         keep_going=args.keep_going,
+        env_by_host=env_by_host,
     )
 
     if not args.quiet:

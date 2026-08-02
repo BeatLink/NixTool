@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 
 from textual import on, work
@@ -84,6 +85,9 @@ class CommandRunner(Widget):
     def __init__(self, work_dir=None, **kwargs):
         super().__init__(**kwargs)
         self.work_dir = work_dir
+        # Secret values for the queue, carried in the child's environment rather
+        # than in the command text, which is both logged and visible in ps.
+        self.command_env = {}
         # Per-instance: a class-level list would be shared by every runner.
         self.command_queue = []
         self.final_return_code = 0
@@ -213,6 +217,7 @@ class CommandRunner(Widget):
                     cwd=self.work_dir,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
+                    env={**os.environ, **self.command_env} if self.command_env else None,
                     # Its own process group, so terminate() reaches the whole
                     # pipeline rather than only the shell that spawned it.
                     start_new_session=True,

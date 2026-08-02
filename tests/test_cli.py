@@ -178,6 +178,84 @@ def test_secret_from_environment(config_file, monkeypatch, capsys):
     assert "PASSPHRASE = ********" in capsys.readouterr().out
 
 
+def test_secret_is_never_substituted_into_a_resolved_command():
+    node = {
+        "name": "leaky",
+        "commands": ["printf '%s' <PASSPHRASE> > /tmp/out"],
+        "menu_variables": {"PASSPHRASE": {"type": "password"}},
+    }
+    plan = resolver.build_plan(node, {}, [None], {"PASSPHRASE": "swordfish"})
+    command = plan[0][1]
+    assert "swordfish" not in command
+    assert '"$NIXTOOL_SECRET_PASSPHRASE"' in command
+
+
+def test_non_secret_is_still_substituted_literally():
+    node = {
+        "name": "plain",
+        "commands": ["echo <TARGET>"],
+        "menu_variables": {"TARGET": {"type": "text"}},
+    }
+    plan = resolver.build_plan(node, {}, [None], {"TARGET": "root@host"})
+    assert "root@host" in plan[0][1]
+    assert "NIXTOOL_SECRET" not in plan[0][1]
+
+
+def test_secret_reaches_the_command_through_the_environment(tmp_path):
+    from nixtool import executor
+
+    out = tmp_path / "written"
+    node = {
+        "name": "writer",
+        "commands": [f"printf '%s' <PASSPHRASE> > {out}"],
+        "menu_variables": {"PASSPHRASE": {"type": "password"}},
+    }
+    values = {"PASSPHRASE": "swordfish"}
+    variables = registry.collect_variables(node)
+    plan = resolver.build_plan(node, {}, [None], values)
+    result = executor.run_plan(
+        plan,
+        quiet=True,
+        env_by_host={None: resolver.secret_environment(variables, values)},
+    )
+    assert result.ok
+    # The value never appeared in the command, but still arrived intact.
+    assert out.read_text() == "swordfish"
+
+
+def test_secret_environment_only_carries_secrets():
+    variables = {
+        "PASSPHRASE": {"type": "password"},
+        "TARGET": {"type": "text"},
+    }
+    env = resolver.secret_environment(variables, {"PASSPHRASE": "s3cret", "TARGET": "host"})
+    assert env == {"NIXTOOL_SECRET_PASSPHRASE": "s3cret"}
+
+
+def test_secret_with_shell_metacharacters_survives_intact(tmp_path):
+    from nixtool import executor
+
+    out = tmp_path / "written"
+    hostile = "a b$(touch /tmp/pwned);'\"\\`"
+    node = {
+        "name": "writer",
+        "commands": [f"printf '%s' <PASSPHRASE> > {out}"],
+        "menu_variables": {"PASSPHRASE": {"type": "password"}},
+    }
+    values = {"PASSPHRASE": hostile}
+    plan = resolver.build_plan(node, {}, [None], values)
+    result = executor.run_plan(
+        plan,
+        quiet=True,
+        env_by_host={
+            None: resolver.secret_environment(registry.collect_variables(node), values)
+        },
+    )
+    assert result.ok
+    assert out.read_text() == hostile
+    assert not pathlib.Path("/tmp/pwned").exists()
+
+
 def test_missing_variable_is_reported(config_file, capsys, monkeypatch):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     code = main(["run", "format-data-drive", "--host", "alpha", "-n"])

@@ -8,11 +8,38 @@ front ends call it.
 import shlex
 import uuid
 
-from . import registry
+from . import registry, secrets
+
+SECRET_ENV_PREFIX = "NIXTOOL_SECRET_"
 
 
 class ResolutionError(Exception):
     """Raised when a command cannot be turned into a runnable queue."""
+
+
+def secret_env_name(name: str) -> str:
+    """The shell variable a secret is passed through, e.g. NIXTOOL_SECRET_PASSPHRASE."""
+    return f"{SECRET_ENV_PREFIX}{name}"
+
+
+def secret_names(variables: dict) -> frozenset:
+    """Names of the variables that must never appear in a resolved command."""
+    return frozenset(
+        name for name, spec in variables.items() if secrets.is_secret(spec)
+    )
+
+
+def secret_environment(variables: dict, values: dict) -> dict:
+    """Secret values keyed by the shell variable that carries them.
+
+    Handed to the subprocess environment so the value reaches the command
+    without ever being written into the command string.
+    """
+    return {
+        secret_env_name(name): values[name]
+        for name in secret_names(variables)
+        if name in values
+    }
 
 
 def generate_auto_values(variables: dict, supplied: dict) -> dict:
@@ -47,7 +74,13 @@ def validate_choice(name: str, spec: dict, value: str) -> None:
         )
 
 
-def resolve_placeholders(text: str, config: dict, hostname: str | None, values: dict) -> str:
+def resolve_placeholders(
+    text: str,
+    config: dict,
+    hostname: str | None,
+    values: dict,
+    secrets_by_name: frozenset = frozenset(),
+) -> str:
     """Substitute <FLAKEPATH>, <HOSTNAME>, <USER>, <HOSTURL> and variables.
 
     Every substituted value is shell-quoted. Placeholders are expanded into
@@ -56,6 +89,12 @@ def resolve_placeholders(text: str, config: dict, hostname: str | None, values: 
     attacker-chosen shell. Quoting each value independently is still correct
     inside composite words: ``<FLAKEPATH>#<HOSTNAME>`` becomes ``'/f'#'alpha'``,
     which the shell concatenates back to ``/f#alpha``.
+
+    Secrets are the exception: they expand to a double-quoted reference to an
+    environment variable rather than to the value. A resolved command is both
+    printed in the plan and passed to ``sh -c``, where it is visible in ``ps``
+    to every user on the machine, so the value must never be in it. The
+    environment carrying those variables comes from `secret_environment`.
     """
     host_map = config.get("hosts", {}) if isinstance(config.get("hosts"), dict) else {}
     replacements = {
@@ -65,9 +104,15 @@ def resolve_placeholders(text: str, config: dict, hostname: str | None, values: 
         "<HOSTURL>": host_map.get(hostname, "") if hostname else "",
     }
     for key, value in values.items():
-        replacements[f"<{key}>"] = value
+        if key not in secrets_by_name:
+            replacements[f"<{key}>"] = value
     for key, value in replacements.items():
         text = text.replace(key, shell_quote(str(value)))
+
+    # After quoting, so the reference itself is not quoted into a literal.
+    for name in secrets_by_name:
+        if name in values:
+            text = text.replace(f"<{name}>", f'"${secret_env_name(name)}"')
     return text
 
 
@@ -80,28 +125,49 @@ def shell_quote(value: str) -> str:
     return shlex.quote(value)
 
 
-def resolve_command(node: dict, config: dict, hostname: str | None, values: dict) -> list[str]:
+def resolve_command(
+    node: dict,
+    config: dict,
+    hostname: str | None,
+    values: dict,
+    secrets_by_name: frozenset = frozenset(),
+) -> list[str]:
     """Flatten a command (and any nested sub-commands) into shell strings."""
     queue = []
     for item in node.get("commands", []):
         if isinstance(item, str):
-            queue.append(resolve_placeholders(item, config, hostname, values))
+            queue.append(
+                resolve_placeholders(item, config, hostname, values, secrets_by_name)
+            )
         elif callable(item):
             queue.extend(item(config.get("flake_path")))
         elif isinstance(item, dict):
-            queue.extend(resolve_command(item, config, hostname, values))
+            queue.extend(
+                resolve_command(item, config, hostname, values, secrets_by_name)
+            )
     return queue
 
 
-def build_plan(node: dict, config: dict, hostnames: list[str | None], values: dict) -> list[tuple[str | None, str]]:
+def build_plan(
+    node: dict,
+    config: dict,
+    hostnames: list[str | None],
+    values: dict,
+    secrets_by_name: frozenset | None = None,
+) -> list[tuple[str | None, str]]:
     """The full execution plan as ``(hostname, command)`` pairs.
 
     Running against several hosts resolves the command once per host, matching
     the TUI's "All Hosts" batch behaviour.
+
+    Secrets are taken from the command's own variable declarations when not
+    given, so a caller cannot leak one by forgetting to pass them.
     """
+    if secrets_by_name is None:
+        secrets_by_name = secret_names(registry.collect_variables(node))
     plan = []
     for hostname in hostnames or [None]:
-        for command in resolve_command(node, config, hostname, values):
+        for command in resolve_command(node, config, hostname, values, secrets_by_name):
             plan.append((hostname, command))
     return plan
 

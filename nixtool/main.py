@@ -319,6 +319,10 @@ class NixOSManager(App):
         # (hostname, command) pairs; the runner only needs the command strings,
         # but the plan view shows which host each one targets.
         self.command_queue = [command for _, command in plan]
+        # Secrets travel out of band; the resolved commands only reference them.
+        self.command_runner.command_env = resolver.secret_environment(
+            registry.collect_variables(self.current_cmd), self.selected_vars
+        )
         self.plan_view.setup(self.current_cmd, plan, self.selected_vars)
         self.show("plan-view")
 
