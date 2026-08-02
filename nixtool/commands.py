@@ -138,8 +138,8 @@ nixos_install = {
     "commands": [
         "rm -rf /tmp/nixtool-install-<HOSTNAME>",
         "mkdir -m 700 -p /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh",
-        "printf '%s' <SSH_HOST_KEY> > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_host_ed25519_key",
-        "printf '%s' <SSH_INITRD_KEY> > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
+        "printf '%s\n' <SSH_HOST_KEY> > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_host_ed25519_key",
+        "printf '%s\n' <SSH_INITRD_KEY> > /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
         "printf '%s' <ENCRYPTION_KEY> > /tmp/nixtool-install-<HOSTNAME>/encryption.key",
         "chmod 600 /tmp/nixtool-install-<HOSTNAME>/install/persistent/etc/ssh/* /tmp/nixtool-install-<HOSTNAME>/encryption.key",
         "SSHPASS=<SSH_PASSWORD> nix run github:nix-community/nixos-anywhere -- --env-password --ssh-option \"UserKnownHostsFile=/dev/null\" --ssh-option \"GlobalKnownHostsFile=/dev/null\" --ssh-option \"StrictHostKeyChecking=no\" --extra-files /tmp/nixtool-install-<HOSTNAME>/install --disk-encryption-keys /tmp/encryption.key /tmp/nixtool-install-<HOSTNAME>/encryption.key --phases kexec,disko,install --no-substitute-on-destination --flake <FLAKEPATH>#<HOSTNAME> <SSH_TARGET>",
@@ -186,8 +186,8 @@ it is a disk on this machine, so a wrong path destroys local data.
     "commands": [
         "rm -rf /tmp/nixtool-local-<HOSTNAME>",
         "mkdir -m 700 -p /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh",
-        "printf '%s' <SSH_HOST_KEY> > /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_host_ed25519_key",
-        "printf '%s' <SSH_INITRD_KEY> > /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
+        "printf '%s\n' <SSH_HOST_KEY> > /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_host_ed25519_key",
+        "printf '%s\n' <SSH_INITRD_KEY> > /tmp/nixtool-local-<HOSTNAME>/persistent/etc/ssh/ssh_initrd_host_ed25519_key",
         # disko reads the passphrase from this exact path, named by keylocation in
         # the host's zfs dataset options, so it cannot live under the temp dir.
         "printf '%s' <ENCRYPTION_KEY> > /tmp/encryption.key",
