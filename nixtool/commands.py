@@ -319,38 +319,43 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
         "sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <DATA_DRIVE>",
         "sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
         "if [ <MIRROR_DRIVE> != none ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE> && sudo udevadm settle; fi",
-        "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|')",
-        "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
-        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage",
-        "if [ <MIRROR_DRIVE> != none ]; then sudo zpool attach data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|') $(lsblk -rno NAME <MIRROR_DRIVE> | sed -n 2p | sed 's|^|/dev/|'); fi"
+        "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|')",
+        "sudo zpool upgrade data-pool-<HOSTNAME>",
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>/storage",
+        "if [ <MIRROR_DRIVE> != none ]; then sudo zpool attach data-pool-<HOSTNAME> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|') $(lsblk -rno NAME <MIRROR_DRIVE> | sed -n 2p | sed 's|^|/dev/|'); fi"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select Drive to Format", "type": "disk"},
         "MIRROR_DRIVE": {"title": "Select Secondary Mirror Drive", "type": "disk", "allow_none": True},
-        "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"},
-        "POOL_UUID": {"type": "uuid"}
+        "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"}
     },
     "run_on_remote": True
 }
 
 # Inspired by https://github.com/danboid/creating-ZFS-disks-under-Linux/blob/master/README.md
-format_sd_card_phone = {
-    "id": "format-sd-card",
-    "name": "Format SD Card for Phone (TowBoot + ZFS)",
-    "description": "Wipe an SD card, flash TowBoot, and create an encrypted ZFS pool.",
+flash_towboot = {
+    "id": "flash-towboot",
+    "name": "Flash Tow-Boot to SD Card",
+    "description": "Wipe an SD card and write Tow-Boot to it, leaving the rest of the card unpartitioned.",
     "destructive": True,
     "instructions": """
-# Format SD Card for Phone (TowBoot + ZFS)
+# Flash Tow-Boot to SD Card
 
-This command formats and prepares an SD Card to store TowBoot as well as the
-backup files and other stateful information for a PinePhone.
+Writes Tow-Boot to the start of an SD card and expands the GPT to cover the rest
+of it, leaving that space unpartitioned.
 
-The drive will consist of a GPT partition table containing the TowBoot image
-(partition 1) and an encrypted ZFS data storage pool (partition 2).
+This is only the firmware half. The data pool is a separate command --
+`install/format-sd-data` -- because the two have very different lifetimes: the
+firmware is written once and then left alone, while the data partition gets
+rebuilt whenever its passphrase needs to change. Doing both at once means
+touching Tow-Boot every time the pool is recreated, and re-flashing firmware is
+not something to do by accident.
+
+Run `install/format-sd-data` against the same card afterwards.
 
 ### ⚠️ WARNING
-The selected drive will be erased and formatted in its entirety. Double-check
-your device path to ensure there is no important information on the drive.
+The selected drive is erased in its entirety, partition table included.
+Double-check the device path.
 """,
     "commands": [
         # Wipe the partition table
@@ -364,20 +369,72 @@ your device path to ensure there is no important information on the drive.
         "sudo dd if=pine64-pinephoneA64-<TOWBOOT_VERSION>/shared.disk-image.img of=<DATA_DRIVE> bs=1M oflag=direct,sync status=progress && "
         "rm -rf \"$WORKDIR\"",
         # Expand the GPT partition table to the rest of the SD Card
-        "echo \"write\" | sudo sfdisk --append <DATA_DRIVE>",
-        # Create the ZFS partition (partition 2)
-        "sudo sgdisk --new=2:0:0 --typecode=2:BF00 --change-name=2:zfs-data-partition <DATA_DRIVE> && sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
-        # Create the ZFS pool on partition 2 (the second child partition)
-        "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME>-<POOL_UUID> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 3p | sed 's|^|/dev/|')",
-        "sudo zpool upgrade data-pool-<HOSTNAME>-<POOL_UUID>",
-        # Create the encrypted storage dataset
-        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>-<POOL_UUID>/storage"
+        "echo \"write\" | sudo sfdisk --append <DATA_DRIVE>"
     ],
     "menu_variables": {
-        "DATA_DRIVE": {"title": "Select SD Card to Format", "type": "disk"},
-        "TOWBOOT_VERSION": {"title": "TowBoot Version", "type": "text"},
-        "PASSPHRASE": {"title": "ZFS Pool Passphrase", "type": "password"},
-        "POOL_UUID": {"type": "uuid"}
+        "DATA_DRIVE": {"title": "Select SD Card to Flash", "type": "disk"},
+        "TOWBOOT_VERSION": {"title": "TowBoot Version", "type": "text"}
+    },
+    "run_on_remote": True
+}
+
+format_sd_data = {
+    "id": "format-sd-data",
+    "name": "Format SD Card Data Partition (ZFS)",
+    "description": "Create the encrypted ZFS data pool on partition 2 of a Tow-Boot SD card.",
+    "destructive": True,
+    "instructions": """
+# Format SD Card Data Partition (ZFS)
+
+Creates partition 2 of a Tow-Boot SD card and lays down `data-pool-<HOSTNAME>`
+with an encrypted `storage` dataset, mounted at /Storage by
+`technet.dataDrive`.
+
+Partition 1 and the Tow-Boot image in it are never written by this command --
+only `sgdisk --new=2` and the pool itself. Run `install/flash-towboot` first if
+the card has no firmware yet.
+
+### The passphrase has to match the host's zfs_passphrase
+
+Clevis binds **one** secret per host and feeds it to every dataset in
+`technet.clevis.datasets`. A data pool created with its own separate passphrase
+cannot be unlocked at boot by any amount of configuration -- clevis will decrypt
+the right secret from tang and ZFS will reject it.
+
+So `PASSPHRASE` must be byte-identical to the `zfs_passphrase` in that host's
+sops file. Declare it in nixtool's config as a `value_files` entry pointing at
+the decrypted secret rather than typing it, which is both exact and keeps it off
+the command line.
+
+If a pool already exists with the wrong passphrase and you still know it,
+`zfs change-key` is cheaper than reformatting:
+
+    zfs load-key data-pool-<HOSTNAME>/storage
+    zfs change-key -o keyformat=passphrase \\
+        -o keylocation=file:///run/secrets/zfs_passphrase \\
+        data-pool-<HOSTNAME>/storage
+    zfs set keylocation=prompt data-pool-<HOSTNAME>/storage
+
+### Pool naming
+
+`data-pool-<HOSTNAME>`, with no UUID suffix. `technet.dataDrive.dataset`
+defaults to `data-pool-${hostName}/storage` and will not find a pool named
+anything else.
+
+### ⚠️ WARNING
+Any existing partition 2 and the pool on it are destroyed. Partition 1 is not.
+""",
+    "commands": [
+        # Partition 2 only. Partition 1 (Tow-Boot) is left exactly as it is.
+        "sudo sgdisk --new=2:0:0 --typecode=2:BF00 --change-name=2:zfs-data-partition <DATA_DRIVE> && sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
+        "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME> $(lsblk -rno PATH <DATA_DRIVE> | sed -n 3p)",
+        "sudo zpool upgrade data-pool-<HOSTNAME>",
+        # keylocation=prompt because clevis supplies the passphrase at boot.
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>/storage"
+    ],
+    "menu_variables": {
+        "DATA_DRIVE": {"title": "Select SD Card", "type": "disk"},
+        "PASSPHRASE": {"title": "ZFS Pool Passphrase (must equal the host's zfs_passphrase)", "type": "password"}
     },
     "run_on_remote": True
 }
@@ -419,7 +476,8 @@ install_commands = {
         nixos_install,
         nixos_install_local,
         format_data_drive,
-        format_sd_card_phone,
+        flash_towboot,
+        format_sd_data,
     ]
 }
 
