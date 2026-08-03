@@ -67,6 +67,70 @@ nix_rebuild = {
     "run_on_remote": True
 }
 
+nix_rebuild_offline = {
+    "id": "rebuild-offline",
+    "name": "Run Nixos Rebuild (Attached Disk)",
+    "description": "Activate a configuration on a host whose disk is attached to this machine, for hosts that cannot be reached over SSH.",
+    "instructions": """
+# Run Nixos Rebuild (Attached Disk)
+
+Activates a new generation on a host that cannot be reached over the network, by
+writing directly to its disk while it is attached to **this** machine — a phone
+exposed over USB mass storage, or a drive in a dock.
+
+Nothing is wiped. The pool is imported, the closure is copied in, and
+`switch-to-configuration boot` runs under `nixos-enter`, so the host comes up on
+the new generation at its next boot.
+
+### Where the mount layout comes from
+
+It is not configured here. The pool name and every mountpoint are read from the
+host's own disko configuration, via `config.system.build.mountScript`. That keeps
+one declaration of the layout rather than a copy in this tool that can drift from
+the one the host actually installs with.
+
+That script imports with `-R /mnt` (altroot), so the import cannot land on top of
+this machine's own filesystems.
+
+The mount script is rebuilt with `hostPlatform` forced to this machine's system.
+Built for the host's architecture it carries the host's `zfs` binaries, and a
+foreign-architecture `zpool` under binfmt aborts — it issues ioctls to the running
+kernel's ZFS module across an ABI it does not match. Only the tools change; the
+layout is architecture-independent.
+
+### Teardown
+
+The pool is exported **by name**. Never use `-a` forms while a foreign disk is
+attached: `zpool export -a` and `zfs unmount -a` act on this machine's own pools
+too, and will silently unmount things the running system depends on.
+
+### ⚠️ Before starting, for a PinePhone over Tow-Boot UMS
+
+- **Take the phone out of the keyboard case.** The case supplies 5V over the pogo
+  pins, which stops the USB-C port entering peripheral mode. Tow-Boot reports
+  `Allwinner mUSB OTG (Peripheral)` while the host sees nothing.
+- **Connect the cable before starting UMS.** Tow-Boot binds the gadget when the
+  command starts; attaching a host afterwards does not re-enumerate.
+""",
+    "commands": [
+        "printf '%s' <ENCRYPTION_KEY> > /tmp/encryption.key",
+        "chmod 600 /tmp/encryption.key",
+        "nix build --no-link --print-out-paths <FLAKEPATH>#nixosConfigurations.<HOSTNAME>.config.system.build.toplevel",
+        "sudo \"$(nix build --impure --no-link --print-out-paths --expr '((builtins.getFlake \"<FLAKEPATH>\").nixosConfigurations.\"<HOSTNAME>\".extendModules { modules = [ ({ lib, ... }: { nixpkgs.hostPlatform = lib.mkForce builtins.currentSystem; }) ]; }).config.system.build.mountScript')\"",
+        "sudo nix copy --no-check-sigs --to /mnt \"$(nix build --no-link --print-out-paths <FLAKEPATH>#nixosConfigurations.<HOSTNAME>.config.system.build.toplevel)\"",
+        "sudo nix-env --profile /mnt/nix/var/nix/profiles/system --set \"$(nix build --no-link --print-out-paths <FLAKEPATH>#nixosConfigurations.<HOSTNAME>.config.system.build.toplevel)\"",
+        "sudo nixos-enter --root /mnt -- /nix/var/nix/profiles/system/bin/switch-to-configuration boot",
+        "sudo umount -R /mnt || true",
+        "sudo zpool export root-pool-<HOSTNAME> || true",
+        "sudo rm -f /tmp/encryption.key"
+    ],
+    "menu_variables": {
+        "ENCRYPTION_KEY": {"title": "Enter Disk Encryption Key", "type": "password"}
+    },
+    # Uses <HOSTNAME> to pick the configuration, but every command runs here.
+    "run_on_remote": False
+}
+
 nix_preview_generations = {
     "id": "preview-generations",
     "name": "Preview Old Generations",
@@ -337,6 +401,7 @@ maintenance_commands = {
         nix_flake_update,
         export_dconf,
         nix_rebuild,
+        nix_rebuild_offline,
         nix_preview_generations,
         nix_purge_generations,
         nix_gc,

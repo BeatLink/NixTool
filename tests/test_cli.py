@@ -53,6 +53,31 @@ def test_destructive_flag_propagates_from_nested_commands():
     assert not registry.is_destructive(registry.find_command("flake-update"))
 
 
+def test_no_command_uses_a_pool_wide_zfs_form():
+    """`zpool export -a` and friends act on the running host's own pools too.
+
+    Any command that touches an attached foreign disk must name the pool. This
+    has been got wrong by hand and cost a silently unmounted /persistent, so it
+    is asserted across the whole tree rather than for one command.
+    """
+    forbidden = ("zpool export -a", "zpool import -a", "zfs unmount -a", "zfs umount -a")
+    for path, node in registry.iter_commands():
+        for step in node.get("commands", []):
+            if not isinstance(step, str):
+                continue
+            for form in forbidden:
+                assert form not in step, f"{registry.qualified_id(path, node)}: {form}"
+
+
+def test_offline_rebuild_mounts_from_the_host_disko_config():
+    """The mount layout must come from disko, not be restated here."""
+    node = registry.find_command("maintenance/rebuild-offline")
+    steps = [s for s in node["commands"] if isinstance(s, str)]
+    assert any("system.build.mountScript" in s for s in steps)
+    assert any("zpool export root-pool-<HOSTNAME>" in s for s in steps)
+    assert registry.needs_host(node)
+
+
 def test_needs_host_detects_placeholders():
     assert registry.needs_host(registry.find_command("rebuild"))
     assert not registry.needs_host(registry.find_command("flake-update"))
