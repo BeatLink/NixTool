@@ -418,6 +418,17 @@ If a pool already exists with the wrong passphrase and you still know it,
         data-pool-<HOSTNAME>/storage
     zfs set keylocation=prompt data-pool-<HOSTNAME>/storage
 
+### It runs on THIS machine, and mounts nothing
+
+The card is attached here, so `-R /mnt` (altroot) is not optional. Without it,
+creating the dataset with `mountpoint=/Storage` mounts it immediately -- on top
+of *this* machine's own /Storage, shadowing it. Nothing is lost, but every path
+under it silently becomes the wrong filesystem until someone notices.
+
+An altroot applies only to this import, so the recorded mountpoint stays
+`/Storage` and is correct when the target imports it. The pool is exported at
+the end for the same reason: the card is about to be pulled.
+
 ### Pool naming and mountpoint
 
 `data-pool-<HOSTNAME>`, with no UUID suffix. `technet.dataDrive.dataset`
@@ -440,10 +451,14 @@ Any existing partition 2 and the pool on it are destroyed. Partition 1 is not.
     "commands": [
         # Partition 2 only. Partition 1 (Tow-Boot) is left exactly as it is.
         "sudo sgdisk --new=2:0:0 --typecode=2:BF00 --change-name=2:zfs-data-partition <DATA_DRIVE> && sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
-        "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME> $(lsblk -rno PATH <DATA_DRIVE> | sed -n 3p)",
+        "sudo zpool create -f -d -R /mnt -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME> $(lsblk -rno PATH <DATA_DRIVE> | sed -n 3p)",
         "sudo zpool upgrade data-pool-<HOSTNAME>",
         # keylocation=prompt because clevis supplies the passphrase at boot.
-        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage"
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage",
+        # Leave nothing imported here. The card is going to another machine, and
+        # a pool left imported is one that has to be exported before the card can
+        # be pulled safely.
+        "sudo zpool export data-pool-<HOSTNAME>"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select SD Card", "type": "disk"},
