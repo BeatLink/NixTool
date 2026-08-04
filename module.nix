@@ -113,7 +113,30 @@ in
             }
         ];
 
-        environment.systemPackages = [ cfg.package ];
+        # nixtool's commands are shell strings, so their dependencies are not
+        # visible to Nix and cannot be closure-tracked -- they simply have to be
+        # on PATH. Installing them alongside the tool is what makes a host that
+        # imports this module able to run every command in the tree, rather than
+        # discovering a gap the first time it formats something.
+        #
+        # sgdisk and partprobe were exactly that gap: install-local,
+        # format-data-drive, flash-towboot and format-sd-data all call them, and
+        # a host with neither failed at the first step with
+        # `sudo: sgdisk: command not found`.
+        #
+        # The rest are listed because they are used, not because they were
+        # missing -- most arrive with any NixOS system, but naming them here
+        # means a minimal host does not have to work out why a command failed
+        # halfway through.
+        environment.systemPackages = [
+            cfg.package
+            pkgs.gptfdisk
+            pkgs.parted
+            pkgs.util-linux
+            pkgs.wget
+            pkgs.gnutar
+            pkgs.xz
+        ];
         environment.etc."nixtool/nixtool-config.json".text = builtins.toJSON configFile;
     };
 }

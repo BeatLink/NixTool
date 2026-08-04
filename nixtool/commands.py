@@ -321,7 +321,7 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
         "if [ <MIRROR_DRIVE> != none ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE> && sudo udevadm settle; fi",
         "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|')",
         "sudo zpool upgrade data-pool-<HOSTNAME>",
-        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>/storage",
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage",
         "if [ <MIRROR_DRIVE> != none ]; then sudo zpool attach data-pool-<HOSTNAME> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|') $(lsblk -rno NAME <MIRROR_DRIVE> | sed -n 2p | sed 's|^|/dev/|'); fi"
     ],
     "menu_variables": {
@@ -375,7 +375,10 @@ Double-check the device path.
         "DATA_DRIVE": {"title": "Select SD Card to Flash", "type": "disk"},
         "TOWBOOT_VERSION": {"title": "TowBoot Version", "type": "text"}
     },
-    "run_on_remote": True
+    # Uses <HOSTNAME> to name the pool, but the card is attached to THIS
+    # machine, so every command runs here -- the same as install-local. Running
+    # these on the target would format a card the target does not have.
+    "run_on_remote": False
 }
 
 format_sd_data = {
@@ -415,11 +418,21 @@ If a pool already exists with the wrong passphrase and you still know it,
         data-pool-<HOSTNAME>/storage
     zfs set keylocation=prompt data-pool-<HOSTNAME>/storage
 
-### Pool naming
+### Pool naming and mountpoint
 
 `data-pool-<HOSTNAME>`, with no UUID suffix. `technet.dataDrive.dataset`
 defaults to `data-pool-${hostName}/storage` and will not find a pool named
 anything else.
+
+`mountpoint=/Storage`, not `legacy`. `technet.dataDrive` mounts with the
+`zfsutil` option so ZFS supplies the mount options, and `zfsutil` runs
+`zfs mount`, which refuses a legacy dataset outright:
+
+    filesystem 'data-pool-<HOSTNAME>/storage' cannot be mounted using 'zfs mount'.
+    Use 'zfs set mountpoint=/Storage' or 'mount -t zfs ...'
+
+This command used to create the dataset as `legacy`, which made Storage.mount
+fail on every boot. The pools that predate it are all `/Storage`.
 
 ### ⚠️ WARNING
 Any existing partition 2 and the pool on it are destroyed. Partition 1 is not.
@@ -430,13 +443,16 @@ Any existing partition 2 and the pool on it are destroyed. Partition 1 is not.
         "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME> $(lsblk -rno PATH <DATA_DRIVE> | sed -n 3p)",
         "sudo zpool upgrade data-pool-<HOSTNAME>",
         # keylocation=prompt because clevis supplies the passphrase at boot.
-        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=legacy data-pool-<HOSTNAME>/storage"
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=zstd -o xattr=sa -o acltype=posix -o relatime=on -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select SD Card", "type": "disk"},
         "PASSPHRASE": {"title": "ZFS Pool Passphrase (must equal the host's zfs_passphrase)", "type": "password"}
     },
-    "run_on_remote": True
+    # Uses <HOSTNAME> to name the pool, but the card is attached to THIS
+    # machine, so every command runs here -- the same as install-local. Running
+    # these on the target would format a card the target does not have.
+    "run_on_remote": False
 }
 
 nix_inspect = {
