@@ -140,7 +140,10 @@ def resolve_command(
                 resolve_placeholders(item, config, hostname, values, secrets_by_name)
             )
         elif callable(item):
-            queue.extend(item(config.get("flake_path")))
+            # The whole config, not just the flake path: a generated command may
+            # need to reach a host, which means the hosts map and the ssh user
+            # as well. See get_dconf_commands.
+            queue.extend(item(config))
         elif isinstance(item, dict):
             queue.extend(
                 resolve_command(item, config, hostname, values, secrets_by_name)

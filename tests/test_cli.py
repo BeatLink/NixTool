@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+from nixtool import commands as commands_module
 from nixtool import registry, resolver, secrets
 from nixtool.cli import EXIT_CONFIRM, EXIT_ERROR, EXIT_OK, EXIT_USAGE, main
 
@@ -22,6 +23,59 @@ def config_file(tmp_path, monkeypatch):
     }))
     monkeypatch.setenv("NIXTOOL_CONFIG", str(path))
     return path
+
+
+# --- dconf export ---------------------------------------------------------
+
+def _dconf_flake(tmp_path, settings):
+    """A flake tree holding one dconf-settings.json."""
+    app = tmp_path / "flake" / "nix" / "app"
+    app.mkdir(parents=True)
+    (app / "dconf-settings.json").write_text(json.dumps(settings))
+    return {
+        "flake_path": str(tmp_path / "flake"),
+        "user": "admin",
+        "hosts": {"alpha": "10.0.0.1"},
+    }
+
+
+def test_dconf_export_without_a_host_dumps_locally(tmp_path):
+    config = _dconf_flake(tmp_path, {"dconf_exports": ["/org/example/"]})
+    commands = commands_module.get_dconf_commands(config)
+    assert commands == [
+        "dconf dump /org/example/ > ./nix/app/org.example.dconf"
+    ]
+
+
+def test_dconf_export_with_a_host_dumps_over_ssh_but_writes_locally(tmp_path):
+    config = _dconf_flake(
+        tmp_path, {"host": "alpha", "dconf_exports": ["/org/example/"]}
+    )
+    commands = commands_module.get_dconf_commands(config)
+    # The redirect stays outside the ssh command, so the file lands in the flake
+    # on this machine rather than on the remote host.
+    assert commands == [
+        "ssh admin@10.0.0.1 dconf dump /org/example/ > ./nix/app/org.example.dconf"
+    ]
+
+
+def test_dconf_export_with_an_unknown_host_does_not_fall_back_to_local(tmp_path):
+    config = _dconf_flake(
+        tmp_path, {"host": "nowhere", "dconf_exports": ["/org/example/"]}
+    )
+    commands = commands_module.get_dconf_commands(config)
+    # Falling back to a local dump would overwrite a good export with this
+    # machine's empty one, which is the failure this whole feature exists for.
+    assert len(commands) == 1
+    assert commands[0].startswith("echo ")
+    assert "nowhere" in commands[0]
+    assert "dconf dump" not in commands[0]
+
+
+def test_dconf_export_reports_missing_flake_path():
+    assert commands_module.get_dconf_commands({}) == [
+        "echo 'No flake_path configured; cannot locate dconf targets.'"
+    ]
 
 
 # --- registry -------------------------------------------------------------

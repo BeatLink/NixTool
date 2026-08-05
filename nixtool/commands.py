@@ -12,10 +12,37 @@ nix_flake_update = {
     "run_on_remote": False
 }
 
-def get_dconf_commands(flake_path):
-    queue = []
+def get_dconf_commands(config):
+    """One `dconf dump` per exported path, read locally or over ssh.
+
+    A ``dconf-settings.json`` may name the host its settings live on:
+
+        {"host": "Thor", "dconf_exports": ["/re/sonny/Tangram/"]}
+
+    Without a ``host`` key the dump runs on this machine, which is what every
+    export did before and still does. With one, it runs over ssh against that
+    host while the redirect stays local, so the file lands in the flake either
+    way -- ``ssh … dconf dump`` rather than ``ssh … 'dconf dump > file'``.
+
+    This exists because settings only live where the application does. An
+    export for a phone-only app, dumped on the laptop, silently produces an
+    empty file: dconf reports no error for a path that holds nothing, so the
+    result looks like a successful export of an application with no settings.
+
+    No dbus or XDG_RUNTIME_DIR is set for the remote side. ``dconf dump`` reads
+    the user's gvdb database directly rather than going through the dconf
+    service, so it works in a plain non-login ssh session; writes would not.
+    """
+    flake_path = config.get("flake_path") if isinstance(config, dict) else None
     if not flake_path:
         return ["echo 'No flake_path configured; cannot locate dconf targets.'"]
+
+    host_map = config.get("hosts", {})
+    if not isinstance(host_map, dict):
+        host_map = {}
+    user = config.get("user", "")
+
+    queue = []
     flake_root = pathlib.Path(flake_path)
     for config_path in flake_root.rglob("dconf-settings.json"):
         try:
@@ -25,11 +52,29 @@ def get_dconf_commands(flake_path):
             # not stop the other exports, and the message lands in the log.
             queue.append(f"echo {shlex.quote(f'Error processing {config_path}: {exc}')}")
             continue
+
+        host = data.get("host")
+        prefix = ""
+        if host:
+            url = host_map.get(host)
+            if not url:
+                # Named but unknown. Skipped loudly rather than falling back to
+                # a local dump, which would overwrite a good export with this
+                # machine's empty one.
+                known = ", ".join(sorted(host_map)) or "none"
+                queue.append(
+                    f"echo {shlex.quote(f'{config_path}: unknown host {host!r}; configured hosts: {known}')}"
+                )
+                continue
+            target = f"{user}@{url}" if user else url
+            prefix = f"ssh {shlex.quote(target)} "
+
         for dconf_path in data.get("dconf_exports", []):
             output_name = f"{dconf_path.strip('/').replace('/', '.')}.dconf"
             target_file = (config_path.parent / output_name).relative_to(flake_root)
             queue.append(
-                f"dconf dump {shlex.quote(dconf_path)} > ./{shlex.quote(str(target_file))}"
+                f"{prefix}dconf dump {shlex.quote(dconf_path)}"
+                f" > ./{shlex.quote(str(target_file))}"
             )
     return queue if queue else ["echo 'No localized dconf targets found.'"]
 
