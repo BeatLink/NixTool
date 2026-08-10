@@ -372,6 +372,7 @@ with no arguments, but lets you pass `-c` unambiguously.
 | `garbage-collect` | `nix-collect-garbage -d` | ✓ | ✓ | – |
 | `purge-generations-gc` | Preview, then purge, then collect garbage | ✓ | ✓ | – |
 | `run-all` | Flake update → rebuild → preview → purge → GC | ✓ | ✓ | `ACTION` |
+| `unpersisted` | Lists what sits on the rolled-back datasets and would not survive a reboot | ✓ | – | – |
 | `inspect` | Launches the nix-inspect TUI against your flake | – | – | – |
 | `install-nixos` | Provisions a host with nixos-anywhere, wiping its disks | ✓ | ✓ | `SSH_TARGET`, `SSH_PASSWORD`, `SSH_HOST_KEY`, `SSH_INITRD_KEY`, `ENCRYPTION_KEY` |
 | `format-data-drive` | Wipes a drive, creates an encrypted ZFS pool, optionally mirrored | ✓ | ✓ | `DATA_DRIVE`, `MIRROR_DRIVE`, `PASSPHRASE` |

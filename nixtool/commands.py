@@ -515,6 +515,22 @@ Any existing partition 2 and the pool on it are destroyed. Partition 1 is not.
     "run_on_remote": False
 }
 
+report_unpersisted = {
+    "id": "unpersisted",
+    "name": "Report Unpersisted Data",
+    "description": "List what sits on the rolled-back datasets and would not survive a reboot.",
+    # tree -x stays on one filesystem, and every persisted path is a bind mount from
+    # another dataset, so what it walks is exactly what the rollback discards.
+    # --du without -L, because a depth limit totals only the levels it prints.
+    "commands": [
+        'echo "---- <HOSTNAME>: rolled-back datasets ----" && sudo zfs list -o name,used,mountpoint root-pool-<HOSTNAME>/root root-pool-<HOSTNAME>/root/home',
+        'echo "---- / ----" && sudo tree -x -a --du -h --sort=size / 2>/dev/null | sed -n "1,40p;$p"',
+        'echo "---- /home ----" && sudo tree -x -a --du -h --sort=size /home 2>/dev/null | sed -n "1,40p;$p"',
+        'echo "---- persisted bind mounts ----" && findmnt -rn -o TARGET | grep -E "^/(home|var|etc|root)/" | sort',
+    ],
+    "run_on_remote": True
+}
+
 nix_inspect = {
     "id": "inspect",
     "name": "Inspect Nix Config (nix-inspect)",
@@ -539,6 +555,7 @@ maintenance_commands = {
         nix_purge_generations,
         nix_gc,
         nix_purge_generations_gc,
+        report_unpersisted,
         nix_inspect,
     ]
 }
