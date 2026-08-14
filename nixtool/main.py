@@ -198,9 +198,10 @@ class NixOSManager(App):
         self.check_next_step()
 
     def launch_interactive(self, cmd_dict):
+        command = resolver.interactive_command(cmd_dict, self.config)
         with self.suspend():
             subprocess.run(
-                cmd_dict["command"],
+                command,
                 shell=True,
                 cwd=self.config.get("flake_path"),
             )

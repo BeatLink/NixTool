@@ -147,6 +147,18 @@ def test_placeholders_are_substituted():
     assert out == "/f#alpha u@1.2.3.4 switch"
 
 
+def test_inspect_is_pointed_at_the_configured_flake():
+    """Without --path, nix-inspect loads /etc/nixos instead of the flake."""
+    node = registry.find_command("maintenance/inspect")
+    command = resolver.interactive_command(node, {"flake_path": "/f"})
+    assert command == "nix-inspect --path /f"
+
+
+def test_inspect_without_a_flake_path_omits_the_flag():
+    node = registry.find_command("maintenance/inspect")
+    assert resolver.interactive_command(node, {}) == "nix-inspect"
+
+
 def test_all_hosts_expands_the_plan_per_host():
     cfg = {"flake_path": "/f", "user": "u", "hosts": {"alpha": "1.1.1.1", "beta": "2.2.2.2"}}
     node = registry.find_command("rebuild")

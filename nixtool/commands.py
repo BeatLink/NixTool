@@ -531,11 +531,25 @@ report_unpersisted = {
     "run_on_remote": True
 }
 
+def get_inspect_command(config):
+    """nix-inspect pointed at the configured flake, or at its own default.
+
+    ``--path`` is not optional for this to inspect the right thing. Left off,
+    nix-inspect loads /etc/nixos -- the running system's configuration, which is
+    only the flake nixtool manages when the two happen to coincide. Without a
+    configured flake_path there is nothing better to point it at, so the flag is
+    dropped rather than passed empty, which nix-inspect rejects.
+    """
+    flake_path = config.get("flake_path") if isinstance(config, dict) else None
+    if not flake_path:
+        return "nix-inspect"
+    return f"nix-inspect --path {shlex.quote(flake_path)}"
+
 nix_inspect = {
     "id": "inspect",
     "name": "Inspect Nix Config (nix-inspect)",
     "description": "Launch the nix-inspect TUI against the configured flake.",
-    "command": "nix run github:bluskript/nix-inspect --",
+    "command": get_inspect_command,
     "interactive": True,
     "run_on_remote": False
 }

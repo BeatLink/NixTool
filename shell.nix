@@ -13,6 +13,7 @@ pkgs.mkShell {
         util-linux
         wget
         sshpass
+        nix-inspect
 
         # Python environment and venv automation
         python3

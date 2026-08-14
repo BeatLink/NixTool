@@ -17,6 +17,15 @@
             let
                 pkgs = nixpkgs.legacyPackages.${system};
                 python = pkgs.python3;
+
+                # Binaries the commands shell out to, on PATH even for a package installed without the module.
+                # nix-inspect lists no x86_64-darwin, where naming it fails evaluation rather than the command.
+                runtimeTools =
+                    [
+                        pkgs.nh
+                        pkgs.sshpass
+                    ]
+                    ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.nix-inspect;
             in
             {
                 packages.default = python.pkgs.buildPythonApplication {
@@ -28,9 +37,8 @@
                     nativeBuildInputs = [ python.pkgs.setuptools ];
                     propagatedBuildInputs = [
                         python.pkgs.textual
-                        pkgs.nh
-                        pkgs.sshpass
-                    ];
+                    ]
+                    ++ runtimeTools;
                 };
 
                 apps.default = {
@@ -45,9 +53,8 @@
                             ps.pytest
                             ps.pytest-asyncio
                         ]))
-                        pkgs.nh
-                        pkgs.sshpass
-                    ];
+                    ]
+                    ++ runtimeTools;
                 };
             }
         )

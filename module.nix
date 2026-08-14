@@ -188,6 +188,7 @@ in
         pkgs.wget
         pkgs.gnutar
         pkgs.xz
+        pkgs.nix-inspect
       ];
       environment.etc."nixtool/nixtool-config.json".text = builtins.toJSON configFile;
     })

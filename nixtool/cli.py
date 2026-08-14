@@ -338,10 +338,11 @@ def cmd_run(args) -> int:
     work_dir = cfg.get("flake_path")
 
     if node.get("interactive"):
+        command = resolver.interactive_command(node, cfg)
         if args.dry_run:
-            print(node["command"])
+            print(command)
             return EXIT_OK
-        return executor.run_interactive(node["command"], work_dir)
+        return executor.run_interactive(command, work_dir)
 
     interactive_ok = sys.stdin.isatty() and not args.non_interactive
     variables = registry.collect_variables(node)

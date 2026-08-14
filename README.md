@@ -96,7 +96,7 @@ Or add it to a NixOS configuration:
 ### With pip
 
 Inside the provided Nix shell, which brings in the required system binaries
-(`sgdisk`, `zfs`, `parted`, `lsblk`, `wget`, `sshpass`):
+(`sgdisk`, `zfs`, `parted`, `lsblk`, `wget`, `sshpass`, `nix-inspect`):
 
 ```sh
 nix-shell          # creates ./.venv and runs `pip install -e .`
@@ -233,7 +233,9 @@ After choosing a command the TUI collects, in order:
 
 The `Inspect Nix Config` entry suspends the TUI and hands the terminal to
 [nix-inspect](https://github.com/bluskript/nix-inspect) for browsing your
-configuration, restoring the menu on exit.
+configuration, restoring the menu on exit. It is pointed at `flake_path`, since
+nix-inspect otherwise loads `/etc/nixos` — the running system's configuration
+rather than the flake nixtool manages.
 
 ---
 
@@ -373,7 +375,7 @@ with no arguments, but lets you pass `-c` unambiguously.
 | `purge-generations-gc` | Preview, then purge, then collect garbage | ✓ | ✓ | – |
 | `run-all` | Flake update → rebuild → preview → purge → GC | ✓ | ✓ | `ACTION` |
 | `unpersisted` | Lists what sits on the rolled-back datasets and would not survive a reboot | ✓ | – | – |
-| `inspect` | Launches the nix-inspect TUI against your flake | – | – | – |
+| `inspect` | Launches the nix-inspect TUI against `flake_path` | – | – | – |
 | `install-nixos` | Provisions a host with nixos-anywhere, wiping its disks | ✓ | ✓ | `SSH_TARGET`, `SSH_PASSWORD`, `SSH_HOST_KEY`, `SSH_INITRD_KEY`, `ENCRYPTION_KEY` |
 | `format-data-drive` | Wipes a drive, creates an encrypted ZFS pool, optionally mirrored | ✓ | ✓ | `DATA_DRIVE`, `MIRROR_DRIVE`, `PASSPHRASE` |
 | `format-sd-card` | Wipes an SD card, flashes TowBoot, creates an encrypted ZFS pool | ✓ | ✓ | `DATA_DRIVE`, `TOWBOOT_VERSION`, `PASSPHRASE` |

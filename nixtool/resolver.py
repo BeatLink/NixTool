@@ -151,6 +151,20 @@ def resolve_command(
     return queue
 
 
+def interactive_command(node: dict, config: dict) -> str:
+    """The single shell command behind an interactive sub-tool.
+
+    Takes both forms a step can take -- a string with placeholders, or a
+    callable handed the whole config -- so an interactive entry is written the
+    same way as a queued one. Interactive commands prompt for nothing and target
+    no host, so only the config-level placeholders apply.
+    """
+    command = node["command"]
+    if callable(command):
+        return command(config)
+    return resolve_placeholders(command, config, None, {})
+
+
 def build_plan(
     node: dict,
     config: dict,
