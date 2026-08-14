@@ -8,13 +8,14 @@ from textual.widgets import Header, Footer, ContentSwitcher, Button
 from textual.reactive import reactive
 
 from . import config as config_mod
-from . import registry, resolver
+from . import generations, registry, resolver
 from .theme import white_blue_theme
 from .command_browser import CommandBrowser
 from .command_runner import CommandRunner
 from .host_selector import ALL_HOSTS, HostSelector
 from .input_widget import InputWidget
 from .disk_selector import DiskSelector
+from .generation_selector import GenerationSelector
 from .instructions_widget import InstructionsWidget
 from .options_widget import OptionsWidget
 from .plan_widget import PlanWidget
@@ -78,7 +79,6 @@ class NixOSManager(App):
         self.instructions_shown = False
         self.hostname = ""
         self.command_queue = []
-        self.stage_queue = []
         # The screens visited so far, so Escape can walk back out of a wizard.
         self.history = []
         # Which variable each prompting screen is currently collecting.
@@ -94,6 +94,7 @@ class NixOSManager(App):
         self.input_menu = InputWidget(id="input-menu")
         self.instructions_menu = InstructionsWidget(id="instructions-menu")
         self.disk_selector = DiskSelector(id="disk-selector")
+        self.generation_selector = GenerationSelector(id="generation-selector")
         self.host_selector = HostSelector(id="host-selector")
         self.plan_view = PlanWidget(id="plan-view")
         self.command_runner = CommandRunner(id="command-runner")
@@ -104,6 +105,7 @@ class NixOSManager(App):
             yield self.input_menu
             yield self.instructions_menu
             yield self.disk_selector
+            yield self.generation_selector
             yield self.host_selector
             yield self.plan_view
             yield self.command_runner
@@ -216,6 +218,16 @@ class NixOSManager(App):
         self.current_var = ""
         self.check_next_step()
 
+    @on(GenerationSelector.Selected)
+    def process_generations(self, selected: GenerationSelector.Selected):
+        if self.content_switcher.current != "generation-selector":
+            return
+        selected.stop()
+        # Every generations variable at once: one screen showed both profiles.
+        self.selected_vars.update(selected.values)
+        self.current_var = ""
+        self.check_next_step()
+
     @on(DiskSelector.Selected)
     def process_disk(self, selected: DiskSelector.Selected):
         if self.content_switcher.current != "disk-selector":
@@ -243,6 +255,14 @@ class NixOSManager(App):
             self.show("instructions-menu")
             return
 
+        # The host comes before the variables: a value can depend on which
+        # machine it is for -- the generation picker lists that host's
+        # generations -- while nothing about the host depends on a variable.
+        if registry.needs_host(self.current_cmd) and not self.hostname:
+            self.show("host-selector")
+            self.host_selector.focus()
+            return
+
         # registry.collect_variables is the same traversal the CLI uses, so both
         # front ends prompt for exactly the same variable set.
         all_vars = registry.collect_variables(self.current_cmd)
@@ -253,10 +273,25 @@ class NixOSManager(App):
                 screen = {
                     "list": "variable-menu",
                     "disk": "disk-selector",
+                    "generations": "generation-selector",
                 }.get(var_type, "input-menu")
                 self.step_var[screen] = var_name
 
-                if var_type == "list":
+                if var_type == "generations":
+                    # One screen fills every generations variable at once, so
+                    # the loop skips the rest on the way back round.
+                    self.generation_selector.load(
+                        self.config,
+                        self.hostname,
+                        {
+                            spec.get("profile", "system"): name
+                            for name, spec in all_vars.items()
+                            if spec.get("type") == "generations"
+                        },
+                    )
+                    self.show("generation-selector")
+                    self.generation_selector.focus()
+                elif var_type == "list":
                     self.variable_menu.title = var_cfg.get("title", f"Select {var_name}")
                     self.variable_menu.options = var_cfg.get("options", {})
                     self.show("variable-menu")
@@ -283,11 +318,6 @@ class NixOSManager(App):
                     self.show("input-menu")
                 return
 
-        if registry.needs_host(self.current_cmd) and not self.hostname:
-            self.show("host-selector")
-            self.host_selector.focus()
-            return
-
         self.prepare_command_queue()
 
     @on(InputWidget.Submitted)
@@ -301,11 +331,10 @@ class NixOSManager(App):
         """Resolve the plan and hand it to the confirmation screen."""
         try:
             hostnames = self.target_hostnames()
-            stages = resolver.build_stages(
+            plan = resolver.build_plan(
                 self.current_cmd, self.config, hostnames, self.selected_vars
             )
-            plan = [step for stage in stages for step in stage["plan"]]
-        except resolver.ResolutionError as exc:
+        except (resolver.ResolutionError, generations.GenerationError) as exc:
             self.notify(str(exc), title="Cannot run command", severity="error", timeout=12)
             self.reset()
             return
@@ -322,20 +351,11 @@ class NixOSManager(App):
         # (hostname, command) pairs; the runner only needs the command strings,
         # but the plan view shows which host each one targets.
         self.command_queue = [command for _, command in plan]
-        self.stage_queue = [
-            {
-                "name": stage["name"],
-                "prompt": stage["prompt"],
-                "optional": stage["optional"],
-                "commands": [command for _, command in stage["plan"]],
-            }
-            for stage in stages
-        ]
         # Secrets travel out of band; the resolved commands only reference them.
         self.command_runner.command_env = resolver.secret_environment(
             registry.collect_variables(self.current_cmd), self.selected_vars
         )
-        self.plan_view.setup(self.current_cmd, stages, self.selected_vars)
+        self.plan_view.setup(self.current_cmd, plan, self.selected_vars)
         self.show("plan-view")
 
     def target_hostnames(self):
@@ -370,7 +390,7 @@ class NixOSManager(App):
         self.command_runner.focus()
         if self.config.get("flake_path"):
             self.command_runner.work_dir = self.config["flake_path"]
-        self.command_runner.load_stages(self.stage_queue)
+        self.command_runner.load_command_queue(self.command_queue)
 
     @on(Button.Pressed, "#return")
     def on_return_pressed(self, event: Button.Pressed):
@@ -384,7 +404,6 @@ class NixOSManager(App):
         self.instructions_shown = False
         self.hostname = ""
         self.command_queue = []
-        self.stage_queue = []
         self.history = []
         self.step_var = {}
         # Return to the command browser.

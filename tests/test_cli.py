@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from nixtool import commands as commands_module
+from nixtool import generations
 from nixtool import registry, resolver, secrets
 from nixtool.cli import EXIT_CONFIRM, EXIT_ERROR, EXIT_OK, EXIT_USAGE, main
 
@@ -462,121 +463,115 @@ def test_successful_execution_returns_zero(config_file, capsys):
     assert code == EXIT_OK
 
 
-# --- wizard stages --------------------------------------------------------
+# --- generations ----------------------------------------------------------
 
-def _wizard(tmp_path):
-    """A three-stage wizard whose stages each leave a file behind."""
-    return {
-        "name": "wizard",
-        "stages": [
-            {
-                "name": "look",
-                "commands": [f"touch {tmp_path}/look"],
-            },
-            {
-                "name": "purge", "optional": True, "prompt": "Purge?",
-                "commands": [f"touch {tmp_path}/purge"],
-            },
-            {
-                "name": "gc", "optional": True, "prompt": "Collect?",
-                "commands": [f"touch {tmp_path}/gc"],
-            },
-        ],
-    }
+LISTING = """   1   2025-11-02 09:14:33
+   2   2025-12-18 22:03:11
+   3   2026-01-30 08:41:07
+   4   2026-03-11 17:55:02   (current)
+"""
 
 
-def _run_args(**overrides):
-    import argparse
-
-    defaults = dict(yes=False, quiet=True, keep_going=False, non_interactive=False)
-    return argparse.Namespace(**{**defaults, **overrides})
-
-
-def _run_wizard(tmp_path, **overrides):
-    from nixtool import cli
-
-    stages = resolver.build_stages(_wizard(tmp_path), {}, [None], {})
-    code = cli.run_stages(stages, _run_args(**overrides), None, {}, 3)
-    return code, {name for name in ("look", "purge", "gc") if (tmp_path / name).exists()}
+def test_generation_listing_is_parsed():
+    parsed = generations.parse(LISTING)
+    assert [g["id"] for g in parsed] == [1, 2, 3, 4]
+    assert parsed[3]["current"] and not parsed[0]["current"]
+    assert parsed[0]["date"] == "2025-11-02 09:14:33"
 
 
-def test_plain_command_is_one_mandatory_stage():
-    node = registry.find_command("flake-update")
-    stages = resolver.build_stages(node, {}, [None], {})
-    assert len(stages) == 1
-    assert not stages[0]["optional"]
-    assert stages[0]["plan"] == resolver.build_plan(node, {}, [None], {})
+def test_generation_listing_ignores_noise():
+    assert generations.parse("error: broken\nnot a generation") == []
+    assert generations.parse("") == []
 
 
-def test_optional_stages_are_skipped_without_a_terminal(tmp_path):
-    """Off a TTY the deleting stages must not be assumed; --yes is required."""
-    code, ran = _run_wizard(tmp_path, non_interactive=True)
-    assert code == EXIT_OK
-    assert ran == {"look"}
+def test_generation_selection_accepts_what_nix_env_accepts():
+    assert generations.normalise([3, 1, 2]) == "1 2 3"
+    assert generations.normalise("old") == "old"
+    assert generations.normalise("+5") == "+5"
+    assert generations.normalise("none") == ""
+    assert generations.normalise("") == ""
+    assert generations.normalise(None) == ""
 
 
-def test_yes_accepts_every_optional_stage(tmp_path):
-    code, ran = _run_wizard(tmp_path, yes=True, non_interactive=True)
-    assert code == EXIT_OK
-    assert ran == {"look", "purge", "gc"}
+def test_generation_selection_rejects_shell_injection():
+    """The value reaches a shell, and on the CLI it comes from a flag."""
+    for hostile in ("1; rm -rf /", "$(touch /tmp/pwned)", "old; reboot", "`id`"):
+        with pytest.raises(generations.GenerationError):
+            generations.normalise(hostile)
 
 
-def test_each_optional_stage_is_asked_for_separately(tmp_path, monkeypatch):
-    answers = iter(["y", "n"])
-    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    code, ran = _run_wizard(tmp_path)
-    assert code == EXIT_OK
-    assert ran == {"look", "purge"}
-
-
-def test_a_failed_stage_stops_the_wizard(tmp_path):
-    from nixtool import cli
-
-    stages = resolver.build_stages(
-        {
-            "name": "wizard",
-            "stages": [
-                {"name": "boom", "commands": ["false"]},
-                {"name": "after", "commands": [f"touch {tmp_path}/after"]},
-            ],
-        },
-        {}, [None], {},
+def test_generation_commands_reach_the_selected_host():
+    """Regression: these ran bare, so picking a host still acted locally."""
+    cfg = {"user": "admin", "hosts": {"alpha": "10.0.0.1"}}
+    assert generations.list_command("system", cfg, "alpha").startswith(
+        "ssh admin@10.0.0.1 "
     )
-    assert cli.run_stages(stages, _run_args(), None, {}, 2) == EXIT_ERROR
-    assert not (tmp_path / "after").exists()
+    assert generations.collect_garbage_command(cfg, "alpha") == (
+        "ssh admin@10.0.0.1 sudo nix-collect-garbage -d"
+    )
 
 
-# --- the generation wizard ------------------------------------------------
-
-def test_generations_are_previewed_before_anything_is_offered():
-    stages = resolver.stage_nodes(registry.find_command("manage-generations"))
-    first = stages[0]
-    assert not first.get("optional")
-    assert "--list-generations" in first["commands"][0]
-    assert [bool(s.get("optional")) for s in stages] == [False, True, True]
+def test_generation_commands_stay_local_for_an_unconfigured_host():
+    assert generations.list_command("system", {}, None) == (
+        "sudo nix-env --profile /nix/var/nix/profiles/system --list-generations"
+    )
 
 
-def test_only_the_destructive_generation_stages_are_optional():
-    """The preview runs unasked precisely because it deletes nothing."""
-    stages = resolver.stage_nodes(registry.find_command("manage-generations"))
-    mandatory = [s for s in stages if not s.get("optional")]
-    optional = [s for s in stages if s.get("optional")]
-    assert not any(registry.is_destructive(s) for s in mandatory)
-    assert optional and all(registry.is_destructive(s) for s in optional)
-    assert all(s.get("prompt") for s in optional)
+def test_nothing_selected_deletes_nothing():
+    commands = commands_module.get_generation_commands(
+        {}, {"SYSTEM_GENERATIONS": "none", "USER_GENERATIONS": "none", "RUN_GC": "no"}
+    )
+    assert len(commands) == 1
+    assert commands[0].startswith("echo ")
+    assert "delete-generations" not in commands[0]
+    assert "collect-garbage" not in commands[0]
 
 
-def test_the_generation_wizard_still_targets_a_host():
+def test_only_the_selected_profile_is_deleted():
+    commands = commands_module.get_generation_commands(
+        {}, {"SYSTEM_GENERATIONS": "1 2", "USER_GENERATIONS": "none", "RUN_GC": "no"}
+    )
+    assert commands == [
+        "sudo nix-env --profile /nix/var/nix/profiles/system"
+        " --delete-generations 1 2"
+    ]
+
+
+def test_garbage_collection_is_appended_when_asked():
+    commands = commands_module.get_generation_commands(
+        {}, {"SYSTEM_GENERATIONS": "old", "USER_GENERATIONS": "none", "RUN_GC": "yes"}
+    )
+    assert commands[-1] == "sudo nix-collect-garbage -d"
+
+
+def test_the_generation_command_resolves_through_the_normal_plan():
+    cfg = {"user": "admin", "hosts": {"alpha": "10.0.0.1"}}
+    node = registry.find_command("manage-generations")
+    plan = resolver.build_plan(node, cfg, ["alpha"], {
+        "SYSTEM_GENERATIONS": "2 3", "USER_GENERATIONS": "none", "RUN_GC": "yes",
+    })
+    assert [host for host, _ in plan] == ["alpha", "alpha"]
+    assert all(command.startswith("ssh admin@10.0.0.1 ") for _, command in plan)
+    assert "--delete-generations 2 3" in plan[0][1]
+    assert plan[1][1].endswith("nix-collect-garbage -d")
+
+
+def test_the_generation_command_still_targets_a_host():
     node = registry.find_command("manage-generations")
     assert registry.needs_host(node)
     assert registry.is_destructive(node)
+    assert sorted(registry.collect_variables(node)) == [
+        "RUN_GC", "SYSTEM_GENERATIONS", "USER_GENERATIONS",
+    ]
 
 
-def test_wizard_stages_resolve_for_every_host():
-    cfg = {"hosts": {"alpha": "1.1.1.1", "beta": "2.2.2.2"}}
-    node = registry.find_command("manage-generations")
-    hosts = resolver.target_hosts(node, cfg, None, all_hosts=True)
-    stages = resolver.build_stages(node, cfg, hosts, {})
-    # Every host is previewed before the first offer is made.
-    assert [h for h, _ in stages[0]["plan"]] == ["alpha", "beta"]
+def test_generations_can_be_driven_from_flags(config_file, capsys):
+    code = main([
+        "run", "manage-generations", "--host", "alpha",
+        "--system-generations", "old", "--user-generations", "none",
+        "--run-gc", "yes", "-n",
+    ])
+    assert code == EXIT_OK
+    out = capsys.readouterr().out
+    assert "--delete-generations old" in out
+    assert "nix-collect-garbage -d" in out

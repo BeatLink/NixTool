@@ -13,15 +13,6 @@ def is_category(node) -> bool:
     return bool(node.get("category"))
 
 
-def substeps(node) -> list:
-    """Everything a command runs: its own steps, plus any wizard stages.
-
-    A stage is itself a command node, so the two lists are interchangeable to
-    every traversal below; only execution treats them differently.
-    """
-    return list(node.get("commands", [])) + list(node.get("stages", []))
-
-
 def iter_commands(node=None, path=()):
     """Yield ``(path, node)`` for every runnable (non-category) command.
 
@@ -91,7 +82,7 @@ def collect_variables(node) -> dict:
     variables = {}
     if "menu_variables" in node:
         variables.update(node["menu_variables"])
-    for child in substeps(node):
+    for child in node.get("commands", []):
         if isinstance(child, dict):
             variables.update(collect_variables(child))
     return variables
@@ -101,7 +92,7 @@ def needs_host(node) -> bool:
     """Whether a command references a host, directly or through a sub-command."""
     if node.get("run_on_remote"):
         return True
-    for child in substeps(node):
+    for child in node.get("commands", []):
         if isinstance(child, str) and ("<HOSTNAME>" in child or "<HOSTURL>" in child):
             return True
         if isinstance(child, dict) and needs_host(child):
@@ -119,5 +110,5 @@ def is_destructive(node) -> bool:
         return True
     return any(
         isinstance(child, dict) and is_destructive(child)
-        for child in substeps(node)
+        for child in node.get("commands", [])
     )

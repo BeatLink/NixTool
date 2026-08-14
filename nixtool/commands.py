@@ -2,6 +2,8 @@ import json
 import pathlib
 import shlex
 
+from . import generations
+
 nix_flake_update = {
     "id": "flake-update",
     "name": "Run Nix Flake Update",
@@ -12,7 +14,7 @@ nix_flake_update = {
     "run_on_remote": False
 }
 
-def get_dconf_commands(config):
+def get_dconf_commands(config, values=None, hostname=None):
     """One `dconf dump` per exported path, read locally or over ssh.
 
     A ``dconf-settings.json`` may name the host its settings live on:
@@ -176,15 +178,32 @@ too, and will silently unmount things the running system depends on.
     "run_on_remote": False
 }
 
+def get_preview_generations_commands(config, values=None, hostname=None):
+    """List both profiles on the selected host, one labelled step each."""
+    queue = []
+    for profile in ("system", "user"):
+        label = shlex.quote(f"---- {hostname or 'this machine'} ({profile} generations) ----")
+        queue.append(
+            f"echo {label} && {generations.list_command(profile, config, hostname)}"
+        )
+    return queue
+
 nix_preview_generations = {
     "id": "preview-generations",
     "name": "Preview Old Generations",
     "description": "List system and user generations without deleting anything.",
     "commands": [
-        'echo "---- <HOSTNAME> (system generations) ----" && sudo nix-env --profile /nix/var/nix/profiles/system --list-generations && echo "---- <HOSTNAME> (user generations) ----" && nix-env --list-generations'
+        get_preview_generations_commands
     ],
     "run_on_remote": True
 }
+
+def get_purge_generations_commands(config, values=None, hostname=None):
+    """Delete all but the current generation in both profiles."""
+    return [
+        generations.delete_command(profile, "old", config, hostname)
+        for profile in ("system", "user")
+    ]
 
 nix_purge_generations = {
     "id": "purge-generations",
@@ -192,11 +211,13 @@ nix_purge_generations = {
     "description": "Delete all but the current system and user generations.",
     "destructive": True,
     "commands": [
-        "sudo nix-env --profile /nix/var/nix/profiles/system --delete-generations old",
-        "nix-env --delete-generations old"
+        get_purge_generations_commands
     ],
     "run_on_remote": True
 }
+
+def get_gc_commands(config, values=None, hostname=None):
+    return [generations.collect_garbage_command(config, hostname)]
 
 nix_gc = {
     "id": "garbage-collect",
@@ -204,33 +225,67 @@ nix_gc = {
     "description": "Delete unreachable store paths.",
     "destructive": True,
     "commands": [
-        "sudo nix-collect-garbage -d"
+        get_gc_commands
     ],
     "run_on_remote": True
 }
 
+def get_generation_commands(config, values=None, hostname=None):
+    """One delete per profile for exactly the generations picked, then GC.
+
+    Selections go straight to `nix-env --delete-generations`, which also takes
+    `old` and `+N`, so a script can keep the blunt form while the TUI's picker
+    produces an explicit list. A profile with nothing selected is left alone
+    rather than deleted with an empty argument.
+    """
+    values = values or {}
+    queue = []
+    for profile, name in (
+        ("system", "SYSTEM_GENERATIONS"),
+        ("user", "USER_GENERATIONS"),
+    ):
+        command = generations.delete_command(
+            profile, values.get(name), config, hostname
+        )
+        if command:
+            queue.append(command)
+    if str(values.get("RUN_GC", "")).lower() == "yes":
+        queue.append(generations.collect_garbage_command(config, hostname))
+    if not queue:
+        return ["echo 'Nothing selected: no generations removed, no garbage collected.'"]
+    return queue
+
 manage_generations = {
     "id": "manage-generations",
     "name": "Manage Old Generations",
-    "description": "Preview generations, then choose whether to remove old ones and garbage collect.",
+    "description": "List a host's generations, pick which to remove, then optionally collect garbage.",
     "destructive": True,
-    # A wizard rather than one queue: what is worth deleting is only knowable
-    # from the preview, so each destructive stage is offered after its output.
-    "stages": [
-        dict(nix_preview_generations, name="Preview generations"),
-        dict(
-            nix_purge_generations,
-            name="Remove old generations",
-            optional=True,
-            prompt="Remove all but the current system and user generations?",
-        ),
-        dict(
-            nix_gc,
-            name="Run garbage collection",
-            optional=True,
-            prompt="Delete every store path the remaining generations do not reference?",
-        ),
-    ]
+    "commands": [
+        get_generation_commands
+    ],
+    "menu_variables": {
+        # Both filled by one picker screen, which lists what the host actually
+        # holds; on the CLI they are flags taking the same values nix-env does.
+        "SYSTEM_GENERATIONS": {
+            "title": "Select generations to remove",
+            "type": "generations",
+            "profile": "system"
+        },
+        "USER_GENERATIONS": {
+            "title": "Select user generations to remove",
+            "type": "generations",
+            "profile": "user"
+        },
+        "RUN_GC": {
+            "title": "Collect garbage afterwards?",
+            "type": "list",
+            "options": {
+                "yes": "yes - also delete store paths no remaining generation needs",
+                "no": "no - only remove the selected generations"
+            }
+        }
+    },
+    "run_on_remote": True
 }
 
 run_all = {

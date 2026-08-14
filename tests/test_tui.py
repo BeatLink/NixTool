@@ -17,7 +17,9 @@ from nixtool.command_runner import CommandRunner
 from nixtool.host_selector import HostSelector
 from nixtool.main import NixOSManager
 from nixtool.options_widget import OptionsWidget
+from nixtool.generation_selector import GenerationSelector
 from nixtool.plan_widget import PlanWidget
+from textual.widgets import Button, SelectionList
 
 
 @pytest.fixture
@@ -82,11 +84,11 @@ async def test_plan_is_shown_before_running(config_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         await run_command(pilot, "maintenance/rebuild")
-        # rebuild needs ACTION then a host, then must land on the plan screen.
-        assert app.content_switcher.current == "variable-menu"
-        await select(pilot, "variable-menu", "switch")
+        # rebuild needs a host then ACTION, then must land on the plan screen.
         assert app.content_switcher.current == "host-selector"
         await select(pilot, "host-selector", "alpha")
+        assert app.content_switcher.current == "variable-menu"
+        await select(pilot, "variable-menu", "switch")
         assert app.content_switcher.current == "plan-view"
 
 
@@ -146,8 +148,9 @@ async def test_escape_steps_back_and_reasks(config_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         await run_command(pilot, "maintenance/rebuild")
+        await select(pilot, "host-selector", "alpha")
         await select(pilot, "variable-menu", "switch")
-        assert app.content_switcher.current == "host-selector"
+        assert app.content_switcher.current == "plan-view"
         await pilot.press("escape")
         assert app.content_switcher.current == "variable-menu"
         # The discarded ACTION must be asked for again, not silently reused.
@@ -227,96 +230,132 @@ async def test_cancel_terminates_the_running_command(config_path):
         assert not runner.return_button.has_class("invisible")
 
 
-# --- wizard stages --------------------------------------------------------
+# --- the generation picker -------------------------------------------------
 
-async def _wait_for_offer(pilot, runner):
-    """Let the worker reach its next prompt."""
-    import asyncio
-
-    for _ in range(200):
-        await pilot.pause()
-        if not runner.skip_button.has_class("invisible"):
-            return True
-        await asyncio.sleep(0.02)
-    return False
+LISTING = """   1   2025-11-02 09:14:33
+   2   2025-12-18 22:03:11
+   3   2026-01-30 08:41:07
+   4   2026-03-11 17:55:02   (current)
+"""
 
 
-def _two_stages(tmp_path):
-    return [
-        {
-            "name": "preview", "prompt": None, "optional": False,
-            "commands": [f"touch {tmp_path}/preview"],
-        },
-        {
-            "name": "purge", "prompt": "Remove them?", "optional": True,
-            "commands": [f"touch {tmp_path}/purge"],
-        },
-    ]
+@pytest.fixture
+def fake_generations(monkeypatch):
+    """Answer the picker's listing without a nix store or an ssh hop."""
+    from nixtool import generations
+
+    seen = []
+
+    def read(profile, config, hostname, timeout=30):
+        seen.append((profile, hostname))
+        return generations.parse(LISTING), None
+
+    monkeypatch.setattr("nixtool.generation_selector.gen.read", read)
+    return seen
 
 
-async def test_optional_stage_is_offered_after_the_output_it_depends_on(config_path, tmp_path):
+async def _reach_picker(pilot, app):
+    await run_command(pilot, "maintenance/manage-generations")
+    # The host comes first now, since the listing depends on which one.
+    assert app.content_switcher.current == "host-selector"
+    await select(pilot, "host-selector", "alpha")
+    await pilot.pause()
+    return app.query_one("#generation-selector", GenerationSelector)
+
+
+async def test_the_picker_lists_the_selected_host(config_path, fake_generations):
     app = NixOSManager(config_path)
     async with app.run_test() as pilot:
         await pilot.pause()
-        runner = app.query_one("#command-runner", CommandRunner)
-        app.content_switcher.current = "command-runner"
-        runner.load_stages(_two_stages(tmp_path))
-        await pilot.pause()
-        runner._worker = runner.run_command()
-        assert await _wait_for_offer(pilot, runner), "the wizard never asked"
-        # The preview already ran; the decision follows its output.
-        assert (tmp_path / "preview").exists()
-        assert not (tmp_path / "purge").exists()
-        assert "Remove them?" in str(runner.label.content)
-
-        runner.skip_button.press()
-        await runner._worker.wait()
-        await pilot.pause()
-        assert not (tmp_path / "purge").exists()
-        assert runner.skipped_stages == ["purge"]
-        assert runner.final_return_code == 0
+        picker = await _reach_picker(pilot, app)
+        assert app.content_switcher.current == "generation-selector"
+        # Both profiles are read, and from the host that was chosen.
+        assert fake_generations == [("system", "alpha"), ("user", "alpha")]
+        # The current generation is not offered: nix-env refuses to delete it.
+        listing = picker.query_one("#gen-system", SelectionList)
+        assert [option.value for option in listing._options] == [1, 2, 3]
 
 
-async def test_accepting_an_optional_stage_runs_it(config_path, tmp_path):
+async def test_picking_generations_builds_an_explicit_delete(config_path, fake_generations):
     app = NixOSManager(config_path)
     async with app.run_test() as pilot:
         await pilot.pause()
-        runner = app.query_one("#command-runner", CommandRunner)
-        app.content_switcher.current = "command-runner"
-        runner.load_stages(_two_stages(tmp_path))
+        picker = await _reach_picker(pilot, app)
+        picker.query_one("#gen-system", SelectionList).select(2)
+        picker.query_one("#gen-continue", Button).press()
         await pilot.pause()
-        runner._worker = runner.run_command()
-        assert await _wait_for_offer(pilot, runner)
-        runner.yes_button.press()
-        await runner._worker.wait()
-        await pilot.pause()
-        assert (tmp_path / "purge").exists()
-        assert runner.skipped_stages == []
-
-
-async def test_the_generation_wizard_reaches_the_runner_as_stages(config_path):
-    app = NixOSManager(config_path)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await run_command(pilot, "maintenance/manage-generations")
-        await select(pilot, "host-selector", "alpha")
-        await pilot.pause()
+        assert app.selected_vars["SYSTEM_GENERATIONS"] == "2"
+        assert app.selected_vars["USER_GENERATIONS"] == "none"
+        # One screen filled both profiles, so the next question is the GC one.
+        assert app.content_switcher.current == "variable-menu"
+        await select(pilot, "variable-menu", "no")
         assert app.content_switcher.current == "plan-view"
-        assert [stage["optional"] for stage in app.stage_queue] == [False, True, True]
-        assert [stage["name"] for stage in app.stage_queue] == [
-            "Preview generations", "Remove old generations", "Run garbage collection",
+        assert app.command_queue == [
+            "ssh admin@10.0.0.1 sudo nix-env"
+            " --profile /nix/var/nix/profiles/system --delete-generations 2"
         ]
 
 
-async def test_a_wizard_is_confirmed_per_stage_not_up_front(config_path):
-    """Start only begins the preview, so it must not demand a typed 'yes'."""
+async def test_selecting_all_removable_leaves_the_current_alone(config_path, fake_generations):
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        picker = await _reach_picker(pilot, app)
+        picker.action_select_removable()
+        picker.query_one("#gen-continue", Button).press()
+        await pilot.pause()
+        assert app.selected_vars["SYSTEM_GENERATIONS"] == "1 2 3"
+
+
+async def test_skipping_deletion_still_allows_garbage_collection(config_path, fake_generations):
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        picker = await _reach_picker(pilot, app)
+        picker.query_one("#gen-skip", Button).press()
+        await pilot.pause()
+        assert app.selected_vars["SYSTEM_GENERATIONS"] == "none"
+        await select(pilot, "variable-menu", "yes")
+        assert app.command_queue == ["ssh admin@10.0.0.1 sudo nix-collect-garbage -d"]
+
+
+async def test_an_unreachable_host_is_reported_not_guessed(config_path, monkeypatch):
+    monkeypatch.setattr(
+        "nixtool.generation_selector.gen.read",
+        lambda *a, **k: ([], "ssh: connect to host 10.0.0.1: No route to host"),
+    )
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        picker = await _reach_picker(pilot, app)
+        listing = picker.query_one("#gen-system", SelectionList)
+        assert listing.disabled
+        assert "No route to host" in str(listing._options[0].prompt)
+        # Nothing selectable means nothing deleted, not everything deleted.
+        picker.query_one("#gen-continue", Button).press()
+        await pilot.pause()
+        assert app.selected_vars["SYSTEM_GENERATIONS"] == "none"
+
+
+async def test_all_hosts_falls_back_to_the_coarse_rule(config_path, fake_generations):
     app = NixOSManager(config_path)
     async with app.run_test() as pilot:
         await pilot.pause()
         await run_command(pilot, "maintenance/manage-generations")
-        await select(pilot, "host-selector", "alpha")
+        await select(pilot, "host-selector", "all")
         await pilot.pause()
-        assert app.content_switcher.current == "plan-view"
-        assert not app.query_one("#plan-run").disabled
-        # The deleting stages are still announced before anything starts.
-        assert "offered during the run" in str(app.query_one("#plan-warning").content)
+        picker = app.query_one("#generation-selector", GenerationSelector)
+        # No per-host listing was attempted; numbers differ between machines.
+        assert fake_generations == []
+        picker.query_one("#gen-continue", Button).press()
+        await pilot.pause()
+        assert app.selected_vars["SYSTEM_GENERATIONS"] == "old"
+        await select(pilot, "variable-menu", "no")
+        assert [host for host in app.command_queue] == [
+            "ssh admin@10.0.0.1 sudo nix-env"
+            " --profile /nix/var/nix/profiles/system --delete-generations old",
+            "ssh admin@10.0.0.1 nix-env --delete-generations old",
+            "ssh admin@10.0.0.2 sudo nix-env"
+            " --profile /nix/var/nix/profiles/system --delete-generations old",
+            "ssh admin@10.0.0.2 nix-env --delete-generations old",
+        ]

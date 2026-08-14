@@ -8,7 +8,7 @@ front ends call it.
 import shlex
 import uuid
 
-from . import registry, secrets
+from . import generations, registry, secrets
 
 SECRET_ENV_PREFIX = "NIXTOOL_SECRET_"
 
@@ -63,7 +63,15 @@ def missing_variables(variables: dict, values: dict) -> list[str]:
 
 
 def validate_choice(name: str, spec: dict, value: str) -> None:
-    """Reject values outside a list variable's declared options."""
+    """Reject values a variable's type cannot accept."""
+    if spec.get("type") == "generations":
+        # Checked here rather than at build time so a bad --system-generations
+        # is a usage error, and never reaches a shell.
+        try:
+            generations.normalise(value)
+        except generations.GenerationError as exc:
+            raise ResolutionError(str(exc)) from exc
+        return
     if spec.get("type") != "list":
         return
     options = spec.get("options", {})
@@ -134,7 +142,7 @@ def resolve_command(
 ) -> list[str]:
     """Flatten a command (and any nested sub-commands) into shell strings."""
     queue = []
-    for item in registry.substeps(node):
+    for item in node.get("commands", []):
         if isinstance(item, str):
             queue.append(
                 resolve_placeholders(item, config, hostname, values, secrets_by_name)
@@ -142,8 +150,9 @@ def resolve_command(
         elif callable(item):
             # The whole config, not just the flake path: a generated command may
             # need to reach a host, which means the hosts map and the ssh user
-            # as well. See get_dconf_commands.
-            queue.extend(item(config))
+            # as well. Values and hostname follow for generators whose steps
+            # depend on what was chosen. See get_generation_commands.
+            queue.extend(item(config, values, hostname))
         elif isinstance(item, dict):
             queue.extend(
                 resolve_command(item, config, hostname, values, secrets_by_name)
@@ -187,41 +196,6 @@ def build_plan(
         for command in resolve_command(node, config, hostname, values, secrets_by_name):
             plan.append((hostname, command))
     return plan
-
-
-def stage_nodes(node: dict) -> list[dict]:
-    """The wizard stages of a command, or the command itself as a lone stage.
-
-    Callers can then treat every command as staged; a plain command is simply
-    one mandatory stage, which keeps one execution path rather than two.
-    """
-    return list(node.get("stages") or [node])
-
-
-def build_stages(
-    node: dict,
-    config: dict,
-    hostnames: list[str | None],
-    values: dict,
-    secrets_by_name: frozenset | None = None,
-) -> list[dict]:
-    """Resolve a command into ``{name, prompt, optional, plan}`` stages.
-
-    Each stage is resolved for every host before the next one starts, so a
-    wizard run against several hosts previews them all before asking.
-    """
-    if secrets_by_name is None:
-        secrets_by_name = secret_names(registry.collect_variables(node))
-    stages = []
-    for stage in stage_nodes(node):
-        stages.append({
-            "name": stage.get("name", ""),
-            "prompt": stage.get("prompt"),
-            "optional": bool(stage.get("optional")),
-            "destructive": registry.is_destructive(stage),
-            "plan": build_plan(stage, config, hostnames, values, secrets_by_name),
-        })
-    return stages
 
 
 def target_hosts(node: dict, config: dict, requested: list[str] | None, all_hosts: bool) -> list[str | None]:

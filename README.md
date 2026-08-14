@@ -209,14 +209,15 @@ to change category. Filtering searches the category name too, so typing
 After choosing a command the TUI collects, in order:
 
 1. **Instructions** — a warning screen for destructive commands; press Continue.
-2. **Variables** — one screen per variable: a menu for choices, a masked field
-   for passwords, a multi-line field for keys, or a live device list for disks.
-3. **Host** — the host list, including **All Hosts** to run against every
-   configured host in turn.
+2. **Host** — the host list, including **All Hosts** to run against every
+   configured host in turn. It comes before the variables because a value can
+   depend on which machine it is for.
+3. **Variables** — one screen per variable: a menu for choices, a masked field
+   for passwords, a multi-line field for keys, a live device list for disks, or
+   the [generation picker](#the-generation-picker).
 4. **The runner** — shows the exact commands that will run, waits for **Start**,
    then streams output live. A failure stops the queue. **Return** goes back to
-   the menu. For a [wizard](#wizards) it pauses between stages to offer the
-   optional ones.
+   the menu.
 
 The `Inspect Nix Config` entry suspends the TUI and hands the terminal to
 [nix-inspect](https://github.com/bluskript/nix-inspect) for browsing your
@@ -366,7 +367,7 @@ with no arguments, but lets you pass `-c` unambiguously.
 | `preview-generations` | Lists system and user generations, changing nothing | ✓ | – | – |
 | `purge-generations` | Deletes all but the current generation | ✓ | ✓ | – |
 | `garbage-collect` | `nix-collect-garbage -d` | ✓ | ✓ | – |
-| `manage-generations` | Previews generations, then offers to purge and to collect garbage | ✓ | ✓ | – |
+| `manage-generations` | Lists a host's generations, removes the ones you pick, then optionally collects garbage | ✓ | ✓ | `SYSTEM_GENERATIONS`, `USER_GENERATIONS`, `RUN_GC` |
 | `run-all` | Flake update → rebuild → preview → purge → GC | ✓ | ✓ | `ACTION` |
 | `unpersisted` | Lists what sits on the rolled-back datasets and would not survive a reboot | ✓ | – | – |
 | `inspect` | Launches the nix-inspect TUI against `flake_path` | – | – | – |
@@ -377,43 +378,57 @@ with no arguments, but lets you pass `-c` unambiguously.
 | `format-sd-data` | Creates the encrypted ZFS data pool on partition 2 of a Tow-Boot SD card | ✓ | ✓ | `DATA_DRIVE`, `PASSPHRASE` |
 
 `run-all` is a composite: it expands into the sub-commands it contains,
-resolved as a single queue. `manage-generations` is a wizard — see below.
+resolved as a single queue.
 
-### Wizards
+### The generation picker
 
-A wizard is a command split into **stages**. Mandatory stages run in order;
-optional ones are offered during the run, after the output the decision depends
-on is already on screen. `manage-generations` is the one wizard today:
+`manage-generations` does not delete by a rule you have to trust — it lists what
+the host actually holds and lets you choose. In the TUI that is a screen:
 
-| Stage | Runs |
-|---|---|
-| Preview generations | always |
-| Remove old generations | if you say so |
-| Run garbage collection | if you say so |
+```
+┌ Generations on alpha ──────────────────────────────────────────┐
+│ System profile — 4 generation(s), current is 4, 3 removable    │
+│ ┌────────────────────────────┐ ┌─────────────────────────────┐ │
+│ │ [ ]     1  2025-11-02 09:14│ │ [ ]     1  2025-11-02 09:14 │ │
+│ │ [X]     2  2025-12-18 22:03│ │ [ ]     2  2025-12-18 22:03 │ │
+│ │ [X]     3  2026-01-30 08:41│ │ [ ]     3  2026-01-30 08:41 │ │
+│ └────────────────────────────┘ └─────────────────────────────┘ │
+│   2 generation(s) selected for deletion                        │
+│   space toggle · a all removable · n none                      │
+│            [ Skip deletion ]  [ Continue ]                     │
+└────────────────────────────────────────────────────────────────┘
+```
 
-Nothing is deleted before you have seen what exists. The individual
-`preview-generations`, `purge-generations` and `garbage-collect` commands are
-still there for when you already know which one you want.
+The current generation is not listed: `nix-env` refuses to delete it, so
+offering it could only mislead. Both profiles are filled by this one screen,
+after which you are asked whether to collect garbage as well.
 
-In the TUI the offer appears in the runner, below the preview output, as
-**Yes** / **Skip**. On the CLI it is a prompt per stage:
+The CLI asks the same question with the same listing:
 
 ```
 $ nixtool run manage-generations --host alpha
-...
-Remove all but the current system and user generations? [y/N]:
+
+Select generations to remove (system profile on alpha)
+      1   2025-11-02 09:14:33
+      2   2025-12-18 22:03:11
+      3   2026-01-30 08:41:07
+      4   2026-03-11 17:55:02   <- current, cannot be removed
+Generations to remove (numbers, 'old', '+N', or 'none'):
 ```
 
-`--yes` accepts every stage, which is what an unattended timer wants. Without a
-terminal and without `--yes`, optional stages are **skipped** rather than
-assumed — they are the ones that delete things — and the run still exits `0`:
+Anything `nix-env --delete-generations` accepts works, so a script can keep the
+blunt form and skip the prompt entirely:
 
-```
-Skipping 'Remove old generations': it needs --yes when not running on a terminal.
+```sh
+nixtool run manage-generations --host alpha \
+  --system-generations old --user-generations none --run-gc yes --yes
 ```
 
-Running a wizard against several hosts previews them all before the first
-offer, so one answer covers the fleet.
+Selecting **All Hosts** falls back to `old` for every host, since generation
+numbers mean different things on different machines.
+
+If a host cannot be reached, the picker says so and selects nothing for that
+profile rather than guessing.
 
 ---
 
@@ -506,10 +521,9 @@ error: this command is destructive and requires --yes when not running on a term
 A composite command is destructive if any step it contains is, so `run-all` is
 gated even though a flake update on its own is not.
 
-A [wizard](#wizards) is gated per stage instead: the up-front prompt covers only
-what runs unconditionally, and each optional stage asks for itself when it is
-reached. For `manage-generations` nothing runs unconditionally except the
-preview, so there is no prompt before it starts.
+Reading is never gated. Listing a host's generations is a query, not a change,
+so the [picker](#the-generation-picker) runs it without asking; only the
+deletion it produces goes through the confirmation and the runner.
 
 `--dry-run` never executes anything and never prompts. Use it first, especially
 for disk operations where a mistyped device path is unrecoverable.
@@ -555,7 +569,9 @@ nixtool run rebuild --host alpha --action dry-activate
 
 ```sh
 0 3 * * *  nixtool -c /etc/nixtool/nixtool-config.json \
-             run manage-generations --all-hosts --yes --quiet
+             run manage-generations --all-hosts \
+             --system-generations old --user-generations old --run-gc yes \
+             --yes --quiet
 ```
 
 **Provision a new machine:**

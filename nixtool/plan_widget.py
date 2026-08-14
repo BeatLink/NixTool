@@ -92,17 +92,12 @@ class PlanWidget(Widget):
                 yield Button("Back", id="plan-back", variant="default")
                 yield Button("Run", id="plan-run", variant="primary")
 
-    def setup(self, node: dict, stages: list, values: dict) -> None:
+    def setup(self, node: dict, plan: list, values: dict) -> None:
         """Render a plan for confirmation.
 
-        ``stages`` is the list from ``resolver.build_stages``; a plain command
-        arrives as a single mandatory stage.
+        ``plan`` is the ``(hostname, command)`` list from ``resolver.build_plan``.
         """
-        # Typing "yes" gates what Start runs unconditionally. A stage that is
-        # only offered later is confirmed then, once its preview is on screen.
-        self._destructive = any(
-            stage["destructive"] for stage in stages if not stage["optional"]
-        )
+        self._destructive = registry.is_destructive(node)
         self.query_one("#plan-title", Label).update(
             f"Review plan: {node.get('name', '')}"
         )
@@ -120,30 +115,14 @@ class PlanWidget(Widget):
                 lines.append(f"  {escape(name)} = {escape(shown)}")
             lines.append("")
 
-        total = sum(len(stage["plan"]) for stage in stages)
-        optional = [stage for stage in stages if stage["optional"]]
-        lines.append(f"[bold]{total} command(s) will run[/bold]")
-        if optional:
-            lines.append(
-                f"[dim]{len(optional)} stage(s) are offered during the run; "
-                f"nothing there happens until you say so.[/dim]"
-            )
-
-        index = 0
-        for stage in stages:
-            if len(stages) > 1:
-                marker = "  [dim](optional)[/dim]" if stage["optional"] else ""
-                lines.append(f"\n[bold]{escape(stage['name'])}[/bold]{marker}")
-                if stage["prompt"]:
-                    lines.append(f"  [dim]{escape(stage['prompt'])}[/dim]")
-            current_host = object()
-            for hostname, command in stage["plan"]:
-                index += 1
-                if hostname != current_host:
-                    current_host = hostname
-                    if hostname:
-                        lines.append(f"\n  [italic]on {escape(hostname)}[/italic]")
-                lines.append(f"  {index:>3}. {escape(command)}")
+        lines.append(f"[bold]{len(plan)} command(s) will run[/bold]")
+        current_host = object()
+        for index, (hostname, command) in enumerate(plan, start=1):
+            if hostname != current_host:
+                current_host = hostname
+                if hostname:
+                    lines.append(f"\n  [italic]on {escape(hostname)}[/italic]")
+            lines.append(f"  {index:>3}. {escape(command)}")
 
         self.query_one("#plan-text", Static).update("\n".join(lines))
 
@@ -154,21 +133,12 @@ class PlanWidget(Widget):
         if self._destructive:
             warning.update("This command is destructive and cannot be undone.")
             warning.remove_class("hidden")
-        elif any(stage["destructive"] for stage in stages):
-            warning.update(
-                "Destructive stages are offered during the run; "
-                "nothing is deleted until you accept one."
-            )
-            warning.remove_class("hidden")
-        else:
-            warning.add_class("hidden")
-
-        if self._destructive:
             confirm.value = ""
             confirm.remove_class("hidden")
             run_button.disabled = True
             confirm.focus()
         else:
+            warning.add_class("hidden")
             confirm.add_class("hidden")
             run_button.disabled = False
             run_button.focus()
