@@ -460,3 +460,123 @@ def test_malformed_config_is_an_error(tmp_path, capsys, monkeypatch):
 def test_successful_execution_returns_zero(config_file, capsys):
     code = main(["run", "flake-update", "-n"])
     assert code == EXIT_OK
+
+
+# --- wizard stages --------------------------------------------------------
+
+def _wizard(tmp_path):
+    """A three-stage wizard whose stages each leave a file behind."""
+    return {
+        "name": "wizard",
+        "stages": [
+            {
+                "name": "look",
+                "commands": [f"touch {tmp_path}/look"],
+            },
+            {
+                "name": "purge", "optional": True, "prompt": "Purge?",
+                "commands": [f"touch {tmp_path}/purge"],
+            },
+            {
+                "name": "gc", "optional": True, "prompt": "Collect?",
+                "commands": [f"touch {tmp_path}/gc"],
+            },
+        ],
+    }
+
+
+def _run_args(**overrides):
+    import argparse
+
+    defaults = dict(yes=False, quiet=True, keep_going=False, non_interactive=False)
+    return argparse.Namespace(**{**defaults, **overrides})
+
+
+def _run_wizard(tmp_path, **overrides):
+    from nixtool import cli
+
+    stages = resolver.build_stages(_wizard(tmp_path), {}, [None], {})
+    code = cli.run_stages(stages, _run_args(**overrides), None, {}, 3)
+    return code, {name for name in ("look", "purge", "gc") if (tmp_path / name).exists()}
+
+
+def test_plain_command_is_one_mandatory_stage():
+    node = registry.find_command("flake-update")
+    stages = resolver.build_stages(node, {}, [None], {})
+    assert len(stages) == 1
+    assert not stages[0]["optional"]
+    assert stages[0]["plan"] == resolver.build_plan(node, {}, [None], {})
+
+
+def test_optional_stages_are_skipped_without_a_terminal(tmp_path):
+    """Off a TTY the deleting stages must not be assumed; --yes is required."""
+    code, ran = _run_wizard(tmp_path, non_interactive=True)
+    assert code == EXIT_OK
+    assert ran == {"look"}
+
+
+def test_yes_accepts_every_optional_stage(tmp_path):
+    code, ran = _run_wizard(tmp_path, yes=True, non_interactive=True)
+    assert code == EXIT_OK
+    assert ran == {"look", "purge", "gc"}
+
+
+def test_each_optional_stage_is_asked_for_separately(tmp_path, monkeypatch):
+    answers = iter(["y", "n"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    code, ran = _run_wizard(tmp_path)
+    assert code == EXIT_OK
+    assert ran == {"look", "purge"}
+
+
+def test_a_failed_stage_stops_the_wizard(tmp_path):
+    from nixtool import cli
+
+    stages = resolver.build_stages(
+        {
+            "name": "wizard",
+            "stages": [
+                {"name": "boom", "commands": ["false"]},
+                {"name": "after", "commands": [f"touch {tmp_path}/after"]},
+            ],
+        },
+        {}, [None], {},
+    )
+    assert cli.run_stages(stages, _run_args(), None, {}, 2) == EXIT_ERROR
+    assert not (tmp_path / "after").exists()
+
+
+# --- the generation wizard ------------------------------------------------
+
+def test_generations_are_previewed_before_anything_is_offered():
+    stages = resolver.stage_nodes(registry.find_command("manage-generations"))
+    first = stages[0]
+    assert not first.get("optional")
+    assert "--list-generations" in first["commands"][0]
+    assert [bool(s.get("optional")) for s in stages] == [False, True, True]
+
+
+def test_only_the_destructive_generation_stages_are_optional():
+    """The preview runs unasked precisely because it deletes nothing."""
+    stages = resolver.stage_nodes(registry.find_command("manage-generations"))
+    mandatory = [s for s in stages if not s.get("optional")]
+    optional = [s for s in stages if s.get("optional")]
+    assert not any(registry.is_destructive(s) for s in mandatory)
+    assert optional and all(registry.is_destructive(s) for s in optional)
+    assert all(s.get("prompt") for s in optional)
+
+
+def test_the_generation_wizard_still_targets_a_host():
+    node = registry.find_command("manage-generations")
+    assert registry.needs_host(node)
+    assert registry.is_destructive(node)
+
+
+def test_wizard_stages_resolve_for_every_host():
+    cfg = {"hosts": {"alpha": "1.1.1.1", "beta": "2.2.2.2"}}
+    node = registry.find_command("manage-generations")
+    hosts = resolver.target_hosts(node, cfg, None, all_hosts=True)
+    stages = resolver.build_stages(node, cfg, hosts, {})
+    # Every host is previewed before the first offer is made.
+    assert [h for h, _ in stages[0]["plan"]] == ["alpha", "beta"]

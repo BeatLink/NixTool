@@ -26,9 +26,18 @@ pkgs.mkShell {
     # Path to the virtual environment directory
     venvDir = "./.venv";
 
-    # Command to run after the venv is created and activated
+    # Command to run after the venv is created and activated. The banner goes to
+    # stderr so `nix-shell --run "nixtool list --json" | jq` stays parseable.
     postShellHook = ''
         pip install -e .
-        echo "TechNet Installer NixOS-based venv is ready for testing."
+        {
+            echo
+            echo "NixTool venv ready at $venvDir — nixtool installed in editable mode."
+            echo "  nixtool                     launch the interactive interface"
+            echo "  nixtool --help              command line usage"
+            echo "  nixtool list                list every runnable command"
+            echo "  pytest tests/ -q            run the test suite"
+            echo
+        } >&2
     '';
 }

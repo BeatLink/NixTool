@@ -153,8 +153,11 @@ def parse_assignment(text: str) -> tuple[str, str]:
     return key, value
 
 
-def print_plan(plan, node, values_by_host, stream=None) -> None:
+def print_plan(stages, node, values_by_host, stream=None) -> None:
     """Show the resolved commands, with secret values masked.
+
+    ``stages`` comes from ``resolver.build_stages``; a plain command arrives as
+    a single mandatory stage and prints exactly as it always has.
 
     Values are per host, since config-declared credential files may differ
     between them. Identical values across hosts are printed once so the common
@@ -181,14 +184,23 @@ def print_plan(plan, node, values_by_host, stream=None) -> None:
     else:
         for hostname, values in values_by_host.items():
             show(values, hostname)
-    print(f"\nThe following {len(plan)} command(s) will be executed:", file=stream)
-    current_host = object()
-    for index, (hostname, command) in enumerate(plan, start=1):
-        if hostname != current_host:
-            current_host = hostname
-            if hostname:
-                print(f"\n  on {hostname}:", file=stream)
-        print(f"  {index:>3}. {command}", file=stream)
+    total = sum(len(stage["plan"]) for stage in stages)
+    print(f"\nThe following {total} command(s) will be executed:", file=stream)
+    index = 0
+    for stage in stages:
+        if len(stages) > 1:
+            marker = "  (optional)" if stage["optional"] else ""
+            print(f"\n{stage['name']}{marker}", file=stream)
+            if stage["prompt"]:
+                print(f"  {stage['prompt']}", file=stream)
+        current_host = object()
+        for hostname, command in stage["plan"]:
+            index += 1
+            if hostname != current_host:
+                current_host = hostname
+                if hostname:
+                    print(f"\n  on {hostname}:", file=stream)
+            print(f"  {index:>3}. {command}", file=stream)
 
 
 def confirm(node: dict, assume_yes: bool, stream=None) -> bool:
@@ -207,6 +219,27 @@ def confirm(node: dict, assume_yes: bool, stream=None) -> bool:
     return answer == "yes"
 
 
+def accept_stage(stage: dict, args, stream=None) -> bool:
+    """Whether an optional wizard stage runs.
+
+    ``--yes`` takes every stage, which is what an unattended timer wants. Off a
+    terminal without it the stage is skipped rather than assumed: the stages
+    that are optional are the ones that delete things.
+    """
+    stream = sys.stderr if stream is None else stream
+    if args.yes:
+        return True
+    if getattr(args, "non_interactive", False) or not sys.stdin.isatty():
+        print(
+            f"\nSkipping '{stage['name']}': it needs --yes when not running "
+            "on a terminal.",
+            file=stream,
+        )
+        return False
+    prompt = stage["prompt"] or f"Run {stage['name']}?"
+    return input(f"\n{prompt} [y/N]: ").strip().lower() in ("y", "yes")
+
+
 def cmd_list(args) -> int:
     """List available commands."""
     if args.json:
@@ -220,6 +253,12 @@ def cmd_list(args) -> int:
                 "destructive": registry.is_destructive(node),
                 "needs_host": registry.needs_host(node),
                 "interactive": bool(node.get("interactive")),
+                # Named so a wrapper can tell that a run will stop to ask.
+                "optional_stages": [
+                    stage.get("name", "")
+                    for stage in node.get("stages", [])
+                    if stage.get("optional")
+                ],
                 "variables": sorted(registry.collect_variables(node)),
             })
         print(json.dumps(payload, indent=2))
@@ -253,6 +292,14 @@ def cmd_show(args) -> int:
         print(f"\n{node['description']}")
     print(f"\nDestructive: {'yes' if registry.is_destructive(node) else 'no'}")
     print(f"Targets a host: {'yes' if registry.needs_host(node) else 'no'}")
+
+    if node.get("stages"):
+        print("\nStages:")
+        for index, stage in enumerate(node["stages"], start=1):
+            when = "asked during the run" if stage.get("optional") else "always runs"
+            print(f"  {index}. {stage.get('name', '')}  ({when})")
+            if stage.get("prompt"):
+                print(f"       {stage['prompt']}")
 
     if variables:
         print("\nVariables:")
@@ -355,7 +402,17 @@ def cmd_run(args) -> int:
 
     # Values are gathered per host so config-declared credential files can name
     # a different key or password for each machine.
-    plan = []
+    stage_defs = resolver.stage_nodes(node)
+    stages = [
+        {
+            "name": stage.get("name", ""),
+            "prompt": stage.get("prompt"),
+            "optional": bool(stage.get("optional")),
+            "destructive": registry.is_destructive(stage),
+            "plan": [],
+        }
+        for stage in stage_defs
+    ]
     values_by_host = {}
     env_by_host = {}
     secret_names = resolver.secret_names(variables)
@@ -385,44 +442,74 @@ def cmd_run(args) -> int:
         values_by_host[hostname] = values
         env_by_host[hostname] = resolver.secret_environment(variables, values)
         try:
-            plan.extend(resolver.build_plan(node, cfg, [hostname], values, secret_names))
+            for stage, definition in zip(stages, stage_defs):
+                stage["plan"].extend(
+                    resolver.build_plan(definition, cfg, [hostname], values, secret_names)
+                )
         except resolver.ResolutionError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_USAGE
 
-    if not plan:
+    total = sum(len(stage["plan"]) for stage in stages)
+    if not total:
         print("error: command resolved to an empty plan", file=sys.stderr)
         return EXIT_ERROR
 
     if args.dry_run:
-        print_plan(plan, node, values_by_host)
+        print_plan(stages, node, values_by_host)
         return EXIT_OK
 
     if not args.quiet:
-        print_plan(plan, node, values_by_host)
+        print_plan(stages, node, values_by_host)
 
-    if not confirm(node, args.yes):
-        print("Aborted.", file=sys.stderr)
-        return EXIT_CONFIRM
+    # Optional stages carry their own prompt, so the up-front gate covers only
+    # what runs unconditionally -- for a plain command, the whole thing.
+    if any(stage["destructive"] for stage in stages if not stage["optional"]):
+        if not confirm(node, args.yes):
+            print("Aborted.", file=sys.stderr)
+            return EXIT_CONFIRM
 
-    result = executor.run_plan(
-        plan,
-        work_dir=work_dir,
-        quiet=args.quiet,
-        keep_going=args.keep_going,
-        env_by_host=env_by_host,
-    )
+    return run_stages(stages, args, work_dir, env_by_host, total)
+
+
+def run_stages(stages, args, work_dir, env_by_host, total) -> int:
+    """Run each stage in turn, asking before the optional ones."""
+    completed = 0
+    skipped = []
+    failure = None
+    for stage in stages:
+        if stage["optional"] and not accept_stage(stage, args):
+            skipped.append(stage["name"])
+            continue
+        if not args.quiet and len(stages) > 1 and stage["name"]:
+            print(f"\n===== {stage['name']} =====")
+        result = executor.run_plan(
+            stage["plan"],
+            work_dir=work_dir,
+            quiet=args.quiet,
+            keep_going=args.keep_going,
+            env_by_host=env_by_host,
+        )
+        completed += result.completed
+        if not result.ok:
+            failure = result
+            break
 
     if not args.quiet:
-        if result.ok:
-            print(f"\nAll {result.total} command(s) succeeded.")
+        if failure is None and not skipped:
+            print(f"\nAll {completed} command(s) succeeded.")
+        elif failure is None:
+            print(
+                f"\n{completed} of {total} command(s) succeeded. "
+                f"Skipped: {', '.join(skipped)}."
+            )
         else:
             print(
-                f"\nFailed after {result.completed} of {result.total} command(s): "
-                f"{result.failed_command}",
+                f"\nFailed after {completed} of {total} command(s): "
+                f"{failure.failed_command}",
                 file=sys.stderr,
             )
-    return EXIT_OK if result.ok else EXIT_ERROR
+    return EXIT_OK if failure is None else EXIT_ERROR
 
 
 def cmd_tui(args) -> int:

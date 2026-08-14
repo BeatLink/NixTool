@@ -55,6 +55,20 @@
                         ]))
                     ]
                     ++ runtimeTools;
+
+                    # To stderr: `nix develop --command nixtool list --json | jq`
+                    # has to see the command's output on stdout and nothing else.
+                    shellHook = ''
+                        {
+                            echo
+                            echo "NixTool dev shell — python ${python.version}, textual, pytest. Nothing installed."
+                            echo "  python -m nixtool           launch the interactive interface"
+                            echo "  python -m nixtool --help    command line usage"
+                            echo "  python -m nixtool list      list every runnable command"
+                            echo "  pytest tests/ -q            run the test suite"
+                            echo
+                        } >&2
+                    '';
                 };
             }
         )

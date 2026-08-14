@@ -225,3 +225,98 @@ async def test_cancel_terminates_the_running_command(config_path):
 
         assert "ancel" in str(runner.message.content)
         assert not runner.return_button.has_class("invisible")
+
+
+# --- wizard stages --------------------------------------------------------
+
+async def _wait_for_offer(pilot, runner):
+    """Let the worker reach its next prompt."""
+    import asyncio
+
+    for _ in range(200):
+        await pilot.pause()
+        if not runner.skip_button.has_class("invisible"):
+            return True
+        await asyncio.sleep(0.02)
+    return False
+
+
+def _two_stages(tmp_path):
+    return [
+        {
+            "name": "preview", "prompt": None, "optional": False,
+            "commands": [f"touch {tmp_path}/preview"],
+        },
+        {
+            "name": "purge", "prompt": "Remove them?", "optional": True,
+            "commands": [f"touch {tmp_path}/purge"],
+        },
+    ]
+
+
+async def test_optional_stage_is_offered_after_the_output_it_depends_on(config_path, tmp_path):
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        runner = app.query_one("#command-runner", CommandRunner)
+        app.content_switcher.current = "command-runner"
+        runner.load_stages(_two_stages(tmp_path))
+        await pilot.pause()
+        runner._worker = runner.run_command()
+        assert await _wait_for_offer(pilot, runner), "the wizard never asked"
+        # The preview already ran; the decision follows its output.
+        assert (tmp_path / "preview").exists()
+        assert not (tmp_path / "purge").exists()
+        assert "Remove them?" in str(runner.label.content)
+
+        runner.skip_button.press()
+        await runner._worker.wait()
+        await pilot.pause()
+        assert not (tmp_path / "purge").exists()
+        assert runner.skipped_stages == ["purge"]
+        assert runner.final_return_code == 0
+
+
+async def test_accepting_an_optional_stage_runs_it(config_path, tmp_path):
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        runner = app.query_one("#command-runner", CommandRunner)
+        app.content_switcher.current = "command-runner"
+        runner.load_stages(_two_stages(tmp_path))
+        await pilot.pause()
+        runner._worker = runner.run_command()
+        assert await _wait_for_offer(pilot, runner)
+        runner.yes_button.press()
+        await runner._worker.wait()
+        await pilot.pause()
+        assert (tmp_path / "purge").exists()
+        assert runner.skipped_stages == []
+
+
+async def test_the_generation_wizard_reaches_the_runner_as_stages(config_path):
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_command(pilot, "maintenance/manage-generations")
+        await select(pilot, "host-selector", "alpha")
+        await pilot.pause()
+        assert app.content_switcher.current == "plan-view"
+        assert [stage["optional"] for stage in app.stage_queue] == [False, True, True]
+        assert [stage["name"] for stage in app.stage_queue] == [
+            "Preview generations", "Remove old generations", "Run garbage collection",
+        ]
+
+
+async def test_a_wizard_is_confirmed_per_stage_not_up_front(config_path):
+    """Start only begins the preview, so it must not demand a typed 'yes'."""
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await run_command(pilot, "maintenance/manage-generations")
+        await select(pilot, "host-selector", "alpha")
+        await pilot.pause()
+        assert app.content_switcher.current == "plan-view"
+        assert not app.query_one("#plan-run").disabled
+        # The deleting stages are still announced before anything starts.
+        assert "offered during the run" in str(app.query_one("#plan-warning").content)

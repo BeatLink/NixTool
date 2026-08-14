@@ -78,6 +78,7 @@ class NixOSManager(App):
         self.instructions_shown = False
         self.hostname = ""
         self.command_queue = []
+        self.stage_queue = []
         # The screens visited so far, so Escape can walk back out of a wizard.
         self.history = []
         # Which variable each prompting screen is currently collecting.
@@ -300,9 +301,10 @@ class NixOSManager(App):
         """Resolve the plan and hand it to the confirmation screen."""
         try:
             hostnames = self.target_hostnames()
-            plan = resolver.build_plan(
+            stages = resolver.build_stages(
                 self.current_cmd, self.config, hostnames, self.selected_vars
             )
+            plan = [step for stage in stages for step in stage["plan"]]
         except resolver.ResolutionError as exc:
             self.notify(str(exc), title="Cannot run command", severity="error", timeout=12)
             self.reset()
@@ -320,11 +322,20 @@ class NixOSManager(App):
         # (hostname, command) pairs; the runner only needs the command strings,
         # but the plan view shows which host each one targets.
         self.command_queue = [command for _, command in plan]
+        self.stage_queue = [
+            {
+                "name": stage["name"],
+                "prompt": stage["prompt"],
+                "optional": stage["optional"],
+                "commands": [command for _, command in stage["plan"]],
+            }
+            for stage in stages
+        ]
         # Secrets travel out of band; the resolved commands only reference them.
         self.command_runner.command_env = resolver.secret_environment(
             registry.collect_variables(self.current_cmd), self.selected_vars
         )
-        self.plan_view.setup(self.current_cmd, plan, self.selected_vars)
+        self.plan_view.setup(self.current_cmd, stages, self.selected_vars)
         self.show("plan-view")
 
     def target_hostnames(self):
@@ -359,7 +370,7 @@ class NixOSManager(App):
         self.command_runner.focus()
         if self.config.get("flake_path"):
             self.command_runner.work_dir = self.config["flake_path"]
-        self.command_runner.load_command_queue(self.command_queue)
+        self.command_runner.load_stages(self.stage_queue)
 
     @on(Button.Pressed, "#return")
     def on_return_pressed(self, event: Button.Pressed):
@@ -373,6 +384,7 @@ class NixOSManager(App):
         self.instructions_shown = False
         self.hostname = ""
         self.command_queue = []
+        self.stage_queue = []
         self.history = []
         self.step_var = {}
         # Return to the command browser.

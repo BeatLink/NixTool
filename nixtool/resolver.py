@@ -134,7 +134,7 @@ def resolve_command(
 ) -> list[str]:
     """Flatten a command (and any nested sub-commands) into shell strings."""
     queue = []
-    for item in node.get("commands", []):
+    for item in registry.substeps(node):
         if isinstance(item, str):
             queue.append(
                 resolve_placeholders(item, config, hostname, values, secrets_by_name)
@@ -187,6 +187,41 @@ def build_plan(
         for command in resolve_command(node, config, hostname, values, secrets_by_name):
             plan.append((hostname, command))
     return plan
+
+
+def stage_nodes(node: dict) -> list[dict]:
+    """The wizard stages of a command, or the command itself as a lone stage.
+
+    Callers can then treat every command as staged; a plain command is simply
+    one mandatory stage, which keeps one execution path rather than two.
+    """
+    return list(node.get("stages") or [node])
+
+
+def build_stages(
+    node: dict,
+    config: dict,
+    hostnames: list[str | None],
+    values: dict,
+    secrets_by_name: frozenset | None = None,
+) -> list[dict]:
+    """Resolve a command into ``{name, prompt, optional, plan}`` stages.
+
+    Each stage is resolved for every host before the next one starts, so a
+    wizard run against several hosts previews them all before asking.
+    """
+    if secrets_by_name is None:
+        secrets_by_name = secret_names(registry.collect_variables(node))
+    stages = []
+    for stage in stage_nodes(node):
+        stages.append({
+            "name": stage.get("name", ""),
+            "prompt": stage.get("prompt"),
+            "optional": bool(stage.get("optional")),
+            "destructive": registry.is_destructive(stage),
+            "plan": build_plan(stage, config, hostnames, values, secrets_by_name),
+        })
+    return stages
 
 
 def target_hosts(node: dict, config: dict, requested: list[str] | None, all_hosts: bool) -> list[str | None]:

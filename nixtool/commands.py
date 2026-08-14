@@ -209,15 +209,27 @@ nix_gc = {
     "run_on_remote": True
 }
 
-nix_purge_generations_gc = {
-    "id": "purge-generations-gc",
-    "name": "Remove Old Generations & GC",
-    "description": "Preview generations, delete old ones, then garbage collect.",
+manage_generations = {
+    "id": "manage-generations",
+    "name": "Manage Old Generations",
+    "description": "Preview generations, then choose whether to remove old ones and garbage collect.",
     "destructive": True,
-    "commands": [
-        nix_preview_generations,
-        nix_purge_generations,
-        nix_gc
+    # A wizard rather than one queue: what is worth deleting is only knowable
+    # from the preview, so each destructive stage is offered after its output.
+    "stages": [
+        dict(nix_preview_generations, name="Preview generations"),
+        dict(
+            nix_purge_generations,
+            name="Remove old generations",
+            optional=True,
+            prompt="Remove all but the current system and user generations?",
+        ),
+        dict(
+            nix_gc,
+            name="Run garbage collection",
+            optional=True,
+            prompt="Delete every store path the remaining generations do not reference?",
+        ),
     ]
 }
 
@@ -390,13 +402,13 @@ Writes Tow-Boot to the start of an SD card and expands the GPT to cover the rest
 of it, leaving that space unpartitioned.
 
 This is only the firmware half. The data pool is a separate command --
-`install/format-sd-data` -- because the two have very different lifetimes: the
+`formatting/format-sd-data` -- because the two have very different lifetimes: the
 firmware is written once and then left alone, while the data partition gets
 rebuilt whenever its passphrase needs to change. Doing both at once means
 touching Tow-Boot every time the pool is recreated, and re-flashing firmware is
 not something to do by accident.
 
-Run `install/format-sd-data` against the same card afterwards.
+Run `formatting/format-sd-data` against the same card afterwards.
 
 ### ⚠️ WARNING
 The selected drive is erased in its entirety, partition table included.
@@ -439,7 +451,7 @@ with an encrypted `storage` dataset, mounted at /Storage by
 `technet.dataDrive`.
 
 Partition 1 and the Tow-Boot image in it are never written by this command --
-only `sgdisk --new=2` and the pool itself. Run `install/flash-towboot` first if
+only `sgdisk --new=2` and the pool itself. Run `formatting/flash-towboot` first if
 the card has no firmware yet.
 
 ### The passphrase has to match the host's zfs_passphrase
@@ -568,7 +580,7 @@ maintenance_commands = {
         nix_preview_generations,
         nix_purge_generations,
         nix_gc,
-        nix_purge_generations_gc,
+        manage_generations,
         report_unpersisted,
         nix_inspect,
     ]
@@ -576,12 +588,21 @@ maintenance_commands = {
 
 install_commands = {
     "id": "install",
-    "name": "Installation & Formatting",
-    "title": "Select an installation or formatting command",
+    "name": "Installation",
+    "title": "Select an installation command",
     "category": True,
     "commands": [
         nixos_install,
         nixos_install_local,
+    ]
+}
+
+formatting_commands = {
+    "id": "formatting",
+    "name": "Formatting",
+    "title": "Select a formatting command",
+    "category": True,
+    "commands": [
         format_data_drive,
         flash_towboot,
         format_sd_data,
@@ -593,5 +614,6 @@ all_commands = {
     "commands": [
         maintenance_commands,
         install_commands,
+        formatting_commands,
     ]
 }

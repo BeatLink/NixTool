@@ -184,41 +184,27 @@ you through the same steps the CLI takes as flags:
 ┌─ NixTool ────────────────────────────────────────────────┐
 │  CLI tool for managing flake based NixOS installations   │
 ├──────────────────────────────────────────────────────────┤
-│                   Select a category                      │
-│                ┌───────────────────────────┐             │
-│                │ Maintenance               │             │
-│                │ Installation & Formatting │             │
-│                └───────────────────────────┘             │
+│ ┌ Type to filter commands… ────────────────────────────┐ │
+│ └──────────────────────────────────────────────────────┘ │
+│ ┌────────────────┐ ┌───────────────────────────────────┐ │
+│ │ All            │ │ Run All Tasks                     │ │
+│ │ Maintenance    │ │ Run Nix Flake Update              │ │
+│ │ Installation   │ │ Export Dconf Settings             │ │
+│ │ Formatting     │ │ Run Nixos Rebuild                 │ │
+│ │                │ │ Run Nixos Rebuild (Attached Disk) │ │
+│ │                │ │ Preview Old Generations           │ │
+│ │                │ │ …                                 │ │
+│ └────────────────┘ └───────────────────────────────────┘ │
+│ enter run · ↑↓ move · tab categories · esc back          │
 └──────────────────────────────────────────────────────────┘
 ```
 
-Selecting **Maintenance** drills into:
-
-```
-              Select a maintenance command
-        ┌──────────────────────────────────────┐
-        │ Run All Tasks                        │
-        │ Run Nix Flake Update                 │
-        │ Export Dconf Settings                │
-        │ Run Nixos Rebuild                    │
-        │ Preview Old Generations              │
-        │ Remove Old Generations               │
-        │ Run Garbage Collection               │
-        │ Remove Old Generations & GC          │
-        │ Inspect Nix Config (nix-inspect)     │
-        └──────────────────────────────────────┘
-```
-
-**Installation & Formatting** contains:
-
-```
-       Select an installation or formatting command
-        ┌──────────────────────────────────────────┐
-        │ Install NixOS (Anywhere)                 │
-        │ Format Data Drive (ZFS on GPT)           │
-        │ Format SD Card for Phone (TowBoot + ZFS) │
-        └──────────────────────────────────────────┘
-```
+The sidebar narrows the list to **Maintenance**, **Installation** or
+**Formatting**; **All** shows every command at once. The filter box keeps
+keyboard focus, so ↑/↓ move through the commands while you type — the match is a
+subsequence, so `rgen` finds *Remove Old Generations*. Tab moves to the sidebar
+to change category. Filtering searches the category name too, so typing
+`install` narrows the list without leaving **All**.
 
 After choosing a command the TUI collects, in order:
 
@@ -229,7 +215,8 @@ After choosing a command the TUI collects, in order:
    configured host in turn.
 4. **The runner** — shows the exact commands that will run, waits for **Start**,
    then streams output live. A failure stops the queue. **Return** goes back to
-   the menu.
+   the menu. For a [wizard](#wizards) it pauses between stages to offer the
+   optional ones.
 
 The `Inspect Nix Config` entry suspends the TUI and hands the terminal to
 [nix-inspect](https://github.com/bluskript/nix-inspect) for browsing your
@@ -272,16 +259,22 @@ Maintenance  (maintenance)
   maintenance/flake-update           Run Nix Flake Update
   maintenance/export-dconf           Export Dconf Settings
   maintenance/rebuild                Run Nixos Rebuild  [host]
+  maintenance/rebuild-offline        Run Nixos Rebuild (Attached Disk)  [destructive, host]
   maintenance/preview-generations    Preview Old Generations  [host]
   maintenance/purge-generations      Remove Old Generations  [destructive, host]
   maintenance/garbage-collect        Run Garbage Collection  [destructive, host]
-  maintenance/purge-generations-gc   Remove Old Generations & GC  [destructive, host]
+  maintenance/manage-generations     Manage Old Generations  [destructive, host]
+  maintenance/unpersisted            Report Unpersisted Data  [host]
   maintenance/inspect                Inspect Nix Config (nix-inspect)
 
-Installation & Formatting  (install)
+Installation  (install)
   install/install-nixos              Install NixOS (Anywhere)  [destructive, host]
-  install/format-data-drive          Format Data Drive (ZFS on GPT)  [destructive, host]
-  install/format-sd-card             Format SD Card for Phone (TowBoot + ZFS)  [destructive, host]
+  install/install-local              Install NixOS (Local Disk)  [destructive, host]
+
+Formatting  (formatting)
+  formatting/format-data-drive       Format Data Drive (ZFS on GPT)  [destructive, host]
+  formatting/flash-towboot           Flash Tow-Boot to SD Card  [destructive]
+  formatting/format-sd-data          Format SD Card Data Partition (ZFS)  [destructive, host]
 ```
 
 `nixtool list --json` emits the same data as JSON, including each command's
@@ -369,19 +362,58 @@ with no arguments, but lets you pass `-c` unambiguously.
 | `flake-update` | `nix flake update --refresh` | – | – | – |
 | `export-dconf` | Dumps every dconf path listed in the flake's `dconf-settings.json` files back into the flake | – | – | – |
 | `rebuild` | `nixos-rebuild` against `<FLAKEPATH>#<HOSTNAME>` over SSH | ✓ | – | `ACTION` |
+| `rebuild-offline` | Activates a generation on a host whose disk is attached to this machine | ✓ | ✓ | `ENCRYPTION_KEY` |
 | `preview-generations` | Lists system and user generations, changing nothing | ✓ | – | – |
 | `purge-generations` | Deletes all but the current generation | ✓ | ✓ | – |
 | `garbage-collect` | `nix-collect-garbage -d` | ✓ | ✓ | – |
-| `purge-generations-gc` | Preview, then purge, then collect garbage | ✓ | ✓ | – |
+| `manage-generations` | Previews generations, then offers to purge and to collect garbage | ✓ | ✓ | – |
 | `run-all` | Flake update → rebuild → preview → purge → GC | ✓ | ✓ | `ACTION` |
 | `unpersisted` | Lists what sits on the rolled-back datasets and would not survive a reboot | ✓ | – | – |
 | `inspect` | Launches the nix-inspect TUI against `flake_path` | – | – | – |
 | `install-nixos` | Provisions a host with nixos-anywhere, wiping its disks | ✓ | ✓ | `SSH_TARGET`, `SSH_PASSWORD`, `SSH_HOST_KEY`, `SSH_INITRD_KEY`, `ENCRYPTION_KEY` |
+| `install-local` | Installs a host onto a disk attached to this machine | ✓ | ✓ | `TARGET_DISK`, `SSH_HOST_KEY`, `SSH_INITRD_KEY`, `ENCRYPTION_KEY` |
 | `format-data-drive` | Wipes a drive, creates an encrypted ZFS pool, optionally mirrored | ✓ | ✓ | `DATA_DRIVE`, `MIRROR_DRIVE`, `PASSPHRASE` |
-| `format-sd-card` | Wipes an SD card, flashes TowBoot, creates an encrypted ZFS pool | ✓ | ✓ | `DATA_DRIVE`, `TOWBOOT_VERSION`, `PASSPHRASE` |
+| `flash-towboot` | Wipes an SD card and writes Tow-Boot to it, leaving the rest unpartitioned | – | ✓ | `DATA_DRIVE`, `TOWBOOT_VERSION` |
+| `format-sd-data` | Creates the encrypted ZFS data pool on partition 2 of a Tow-Boot SD card | ✓ | ✓ | `DATA_DRIVE`, `PASSPHRASE` |
 
-`run-all` and `purge-generations-gc` are composites: they expand into the
-sub-commands they contain, resolved as a single queue.
+`run-all` is a composite: it expands into the sub-commands it contains,
+resolved as a single queue. `manage-generations` is a wizard — see below.
+
+### Wizards
+
+A wizard is a command split into **stages**. Mandatory stages run in order;
+optional ones are offered during the run, after the output the decision depends
+on is already on screen. `manage-generations` is the one wizard today:
+
+| Stage | Runs |
+|---|---|
+| Preview generations | always |
+| Remove old generations | if you say so |
+| Run garbage collection | if you say so |
+
+Nothing is deleted before you have seen what exists. The individual
+`preview-generations`, `purge-generations` and `garbage-collect` commands are
+still there for when you already know which one you want.
+
+In the TUI the offer appears in the runner, below the preview output, as
+**Yes** / **Skip**. On the CLI it is a prompt per stage:
+
+```
+$ nixtool run manage-generations --host alpha
+...
+Remove all but the current system and user generations? [y/N]:
+```
+
+`--yes` accepts every stage, which is what an unattended timer wants. Without a
+terminal and without `--yes`, optional stages are **skipped** rather than
+assumed — they are the ones that delete things — and the run still exits `0`:
+
+```
+Skipping 'Remove old generations': it needs --yes when not running on a terminal.
+```
+
+Running a wizard against several hosts previews them all before the first
+offer, so one answer covers the fleet.
 
 ---
 
@@ -474,6 +506,11 @@ error: this command is destructive and requires --yes when not running on a term
 A composite command is destructive if any step it contains is, so `run-all` is
 gated even though a flake update on its own is not.
 
+A [wizard](#wizards) is gated per stage instead: the up-front prompt covers only
+what runs unconditionally, and each optional stage asks for itself when it is
+reached. For `manage-generations` nothing runs unconditionally except the
+preview, so there is no prompt before it starts.
+
 `--dry-run` never executes anything and never prompts. Use it first, especially
 for disk operations where a mistyped device path is unrecoverable.
 
@@ -518,7 +555,7 @@ nixtool run rebuild --host alpha --action dry-activate
 
 ```sh
 0 3 * * *  nixtool -c /etc/nixtool/nixtool-config.json \
-             run purge-generations-gc --all-hosts --yes --quiet
+             run manage-generations --all-hosts --yes --quiet
 ```
 
 **Provision a new machine:**
