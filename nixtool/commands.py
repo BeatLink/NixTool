@@ -231,15 +231,22 @@ nix_gc = {
 }
 
 def get_generation_commands(config, values=None, hostname=None):
-    """One delete per profile for exactly the generations picked, then GC.
+    """Whatever the picker asked for: duplicate, delete, collect garbage.
 
-    Selections go straight to `nix-env --delete-generations`, which also takes
-    `old` and `+N`, so a script can keep the blunt form while the TUI's picker
-    produces an explicit list. A profile with nothing selected is left alone
-    rather than deleted with an empty argument.
+    Duplication comes first, so the new generation exists before any deletion
+    could remove the closure it was made from. Selections go straight to
+    `nix-env --delete-generations`, which also takes `old` and `+N`, so a
+    script can keep the blunt form while the picker produces an explicit list.
+    A profile with nothing selected is left alone rather than deleted with an
+    empty argument.
     """
     values = values or {}
     queue = []
+    duplicate = generations.duplicate_command(
+        values.get("DUPLICATE_GENERATION"), config, hostname
+    )
+    if duplicate:
+        queue.append(duplicate)
     for profile, name in (
         ("system", "SYSTEM_GENERATIONS"),
         ("user", "USER_GENERATIONS"),
@@ -257,8 +264,8 @@ def get_generation_commands(config, values=None, hostname=None):
 
 manage_generations = {
     "id": "manage-generations",
-    "name": "Manage Old Generations",
-    "description": "List a host's generations, pick which to remove, then optionally collect garbage.",
+    "name": "Manage Generations",
+    "description": "List a host's generations, then remove or duplicate the ones you pick.",
     "destructive": True,
     "commands": [
         get_generation_commands
@@ -266,15 +273,24 @@ manage_generations = {
     "menu_variables": {
         # Both filled by one picker screen, which lists what the host actually
         # holds; on the CLI they are flags taking the same values nix-env does.
+        # Defaults keep every flag optional on the CLI; the TUI asks regardless.
         "SYSTEM_GENERATIONS": {
             "title": "Select generations to remove",
             "type": "generations",
-            "profile": "system"
+            "profile": "system",
+            "default": "none"
         },
         "USER_GENERATIONS": {
             "title": "Select user generations to remove",
             "type": "generations",
-            "profile": "user"
+            "profile": "user",
+            "default": "none"
+        },
+        "DUPLICATE_GENERATION": {
+            "title": "Generation to duplicate as the newest",
+            "type": "generations",
+            "profile": generations.DUPLICATE,
+            "default": "none"
         },
         "RUN_GC": {
             "title": "Collect garbage afterwards?",
@@ -282,7 +298,8 @@ manage_generations = {
             "options": {
                 "yes": "yes - also delete store paths no remaining generation needs",
                 "no": "no - only remove the selected generations"
-            }
+            },
+            "default": "no"
         }
     },
     "run_on_remote": True
@@ -463,6 +480,12 @@ rebuilt whenever its passphrase needs to change. Doing both at once means
 touching Tow-Boot every time the pool is recreated, and re-flashing firmware is
 not something to do by accident.
 
+The image is built with nix from a Tow-Boot checkout rather than downloaded
+from upstream releases, since the boards run the fork's consolidation branch.
+`TOWBOOT_REPO` names the checkout (declare it in the config's `values` to skip
+the prompt) and `TOWBOOT_DEVICE` the board attribute, e.g.
+`pine64-pinephoneA64` or `pine64-rock64`.
+
 Run `formatting/format-sd-data` against the same card afterwards.
 
 ### ⚠️ WARNING
@@ -474,18 +497,16 @@ Double-check the device path.
         "sudo sgdisk --zap-all <DATA_DRIVE> && sudo partprobe <DATA_DRIVE> && sudo udevadm settle",
         # Wipe any residual TowBoot content
         "sudo dd if=/dev/zero of=<DATA_DRIVE> bs=32k seek=4 count=1 && sync",
-        # Download and extract TowBoot into a temporary workdir, then flash it
-        "WORKDIR=$(mktemp -d) && cd \"$WORKDIR\" && "
-        "wget https://github.com/Tow-Boot/Tow-Boot/releases/download/release-<TOWBOOT_VERSION>/pine64-pinephoneA64-<TOWBOOT_VERSION>.tar.xz && "
-        "tar -xvf pine64-pinephoneA64-<TOWBOOT_VERSION>.tar.xz && "
-        "sudo dd if=pine64-pinephoneA64-<TOWBOOT_VERSION>/shared.disk-image.img of=<DATA_DRIVE> bs=1M oflag=direct,sync status=progress && "
-        "rm -rf \"$WORKDIR\"",
+        # Build TowBoot from the configured checkout, then flash it
+        "OUT=$(nix-build <TOWBOOT_REPO> -A <TOWBOOT_DEVICE> --no-out-link) && "
+        "sudo dd if=\"$OUT\"/shared.disk-image.img of=<DATA_DRIVE> bs=1M oflag=direct,sync status=progress",
         # Expand the GPT partition table to the rest of the SD Card
         "echo \"write\" | sudo sfdisk --append <DATA_DRIVE>"
     ],
     "menu_variables": {
         "DATA_DRIVE": {"title": "Select SD Card to Flash", "type": "disk"},
-        "TOWBOOT_VERSION": {"title": "TowBoot Version", "type": "text"}
+        "TOWBOOT_REPO": {"title": "Tow-Boot Checkout Path", "type": "text"},
+        "TOWBOOT_DEVICE": {"title": "Tow-Boot Device Attribute", "type": "text"}
     },
     # Uses <HOSTNAME> to name the pool, but the card is attached to THIS
     # machine, so every command runs here -- the same as install-local. Running
@@ -632,8 +653,6 @@ maintenance_commands = {
         export_dconf,
         nix_rebuild,
         nix_rebuild_offline,
-        nix_preview_generations,
-        nix_purge_generations,
         nix_gc,
         manage_generations,
         report_unpersisted,

@@ -261,10 +261,8 @@ Maintenance  (maintenance)
   maintenance/export-dconf           Export Dconf Settings
   maintenance/rebuild                Run Nixos Rebuild  [host]
   maintenance/rebuild-offline        Run Nixos Rebuild (Attached Disk)  [destructive, host]
-  maintenance/preview-generations    Preview Old Generations  [host]
-  maintenance/purge-generations      Remove Old Generations  [destructive, host]
   maintenance/garbage-collect        Run Garbage Collection  [destructive, host]
-  maintenance/manage-generations     Manage Old Generations  [destructive, host]
+  maintenance/manage-generations     Manage Generations  [destructive, host]
   maintenance/unpersisted            Report Unpersisted Data  [host]
   maintenance/inspect                Inspect Nix Config (nix-inspect)
 
@@ -364,68 +362,92 @@ with no arguments, but lets you pass `-c` unambiguously.
 | `export-dconf` | Dumps every dconf path listed in the flake's `dconf-settings.json` files back into the flake | – | – | – |
 | `rebuild` | `nixos-rebuild` against `<FLAKEPATH>#<HOSTNAME>` over SSH | ✓ | – | `ACTION` |
 | `rebuild-offline` | Activates a generation on a host whose disk is attached to this machine | ✓ | ✓ | `ENCRYPTION_KEY` |
-| `preview-generations` | Lists system and user generations, changing nothing | ✓ | – | – |
-| `purge-generations` | Deletes all but the current generation | ✓ | ✓ | – |
 | `garbage-collect` | `nix-collect-garbage -d` | ✓ | ✓ | – |
-| `manage-generations` | Lists a host's generations, removes the ones you pick, then optionally collects garbage | ✓ | ✓ | `SYSTEM_GENERATIONS`, `USER_GENERATIONS`, `RUN_GC` |
+| `manage-generations` | Lists a host's generations, then removes or duplicates the ones you pick | ✓ | ✓ | `SYSTEM_GENERATIONS`, `USER_GENERATIONS`, `DUPLICATE_GENERATION`, `RUN_GC` |
 | `run-all` | Flake update → rebuild → preview → purge → GC | ✓ | ✓ | `ACTION` |
 | `unpersisted` | Lists what sits on the rolled-back datasets and would not survive a reboot | ✓ | – | – |
 | `inspect` | Launches the nix-inspect TUI against `flake_path` | – | – | – |
 | `install-nixos` | Provisions a host with nixos-anywhere, wiping its disks | ✓ | ✓ | `SSH_TARGET`, `SSH_PASSWORD`, `SSH_HOST_KEY`, `SSH_INITRD_KEY`, `ENCRYPTION_KEY` |
 | `install-local` | Installs a host onto a disk attached to this machine | ✓ | ✓ | `TARGET_DISK`, `SSH_HOST_KEY`, `SSH_INITRD_KEY`, `ENCRYPTION_KEY` |
 | `format-data-drive` | Wipes a drive, creates an encrypted ZFS pool, optionally mirrored | ✓ | ✓ | `DATA_DRIVE`, `MIRROR_DRIVE`, `PASSPHRASE` |
-| `flash-towboot` | Wipes an SD card and writes Tow-Boot to it, leaving the rest unpartitioned | – | ✓ | `DATA_DRIVE`, `TOWBOOT_VERSION` |
+| `flash-towboot` | Wipes an SD card and writes Tow-Boot to it, leaving the rest unpartitioned | – | ✓ | `DATA_DRIVE`, `TOWBOOT_REPO`, `TOWBOOT_DEVICE` |
 | `format-sd-data` | Creates the encrypted ZFS data pool on partition 2 of a Tow-Boot SD card | ✓ | ✓ | `DATA_DRIVE`, `PASSPHRASE` |
 
 `run-all` is a composite: it expands into the sub-commands it contains,
-resolved as a single queue.
+resolved as a single queue. Pruning generations and collecting garbage are two
+of those steps; they are no longer separate menu entries of their own.
 
 ### The generation picker
 
-`manage-generations` does not delete by a rule you have to trust — it lists what
+`manage-generations` does not act on a rule you have to trust — it lists what
 the host actually holds and lets you choose. In the TUI that is a screen:
 
 ```
-┌ Generations on alpha ──────────────────────────────────────────┐
-│ System profile — 4 generation(s), current is 4, 3 removable    │
-│ ┌────────────────────────────┐ ┌─────────────────────────────┐ │
-│ │ [ ]     1  2025-11-02 09:14│ │ [ ]     1  2025-11-02 09:14 │ │
-│ │ [X]     2  2025-12-18 22:03│ │ [ ]     2  2025-12-18 22:03 │ │
-│ │ [X]     3  2026-01-30 08:41│ │ [ ]     3  2026-01-30 08:41 │ │
-│ └────────────────────────────┘ └─────────────────────────────┘ │
-│   2 generation(s) selected for deletion                        │
-│   space toggle · a all removable · n none                      │
-│            [ Skip deletion ]  [ Continue ]                     │
-└────────────────────────────────────────────────────────────────┘
+┌ Generations on alpha ──────────────────────────────────────────────────┐
+│ System profile — 3 generation(s), current is 130, 2 removable          │
+│ ┌──────────────────────────────────────┐ ┌───────────────────────────┐ │
+│ │ [ ] 128  2026-07-02 09:14  26.11.…40 │ │ [ ]   1  2025-11-02 09:14 │ │
+│ │ [X] 129  2026-07-28 22:03  26.11.…42 │ │ [ ]   2  2025-12-18 22:03 │ │
+│ └──────────────────────────────────────┘ └───────────────────────────┘ │
+│           1 generation(s) selected                                     │
+│           space toggle · a all removable · n none                      │
+│      [ Skip ]  [ New from selected ]  [ Remove selected ]              │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-The current generation is not listed: `nix-env` refuses to delete it, so
-offering it could only mislead. Both profiles are filled by this one screen,
-after which you are asked whether to collect garbage as well.
+The system profile is read through `nixos-rebuild list-generations --json`, so
+each row carries the NixOS version and kernel that distinguish one generation
+from another; hosts without that subcommand fall back to `nix-env`, which gives
+the number and date. The current generation is not listed at all: `nix-env`
+refuses to delete it, so offering it could only mislead.
 
-The CLI asks the same question with the same listing:
+Two actions come off the same selection:
+
+| Action | Takes | Does |
+|---|---|---|
+| **Remove selected** | any number of generations | `nix-env --delete-generations 129` |
+| **New from selected** | exactly one, system profile | `nix-env --set` on that generation's closure |
+
+**New from selected** makes an existing generation the newest one. Unlike a
+rollback it keeps the history: the source stays where it is and a new number is
+appended, so you can promote a known-good configuration without losing what came
+after it. It is offered for the system profile only — the per-user profile's
+generation links sit under a path `nix-env` resolves itself, and naming it from
+outside would be guesswork.
+
+After either action you are asked whether to collect garbage as well.
+
+> **Generations cannot be renamed.** They are numbered symlinks
+> (`/nix/var/nix/profiles/system-130-link`) and nix has no name to change:
+> `nix-env` offers only `--list-generations`, `--delete-generations`,
+> `--switch-generation` and `--set`.
+
+The CLI asks the same questions with the same listing:
 
 ```
 $ nixtool run manage-generations --host alpha
 
 Select generations to remove (system profile on alpha)
-      1   2025-11-02 09:14:33
-      2   2025-12-18 22:03:11
-      3   2026-01-30 08:41:07
-      4   2026-03-11 17:55:02   <- current, cannot be removed
+    128   2026-07-02 09:14:33   26.11.20260702.aaa  6.18.40
+    129   2026-07-28 22:03:11   26.11.20260728.bbb  6.18.42
+    130   2026-08-11 11:09:34   26.11.20260807.f13ff45  6.18.43   <- current
 Generations to remove (numbers, 'old', '+N', or 'none'):
 ```
 
-Anything `nix-env --delete-generations` accepts works, so a script can keep the
-blunt form and skip the prompt entirely:
+Every variable has a default of `none`, so a script names only what it means:
 
 ```sh
+# Prune and collect garbage, unattended
 nixtool run manage-generations --host alpha \
-  --system-generations old --user-generations none --run-gc yes --yes
+  --system-generations old --run-gc yes --yes
+
+# Promote generation 128 to be the newest, changing nothing else
+nixtool run manage-generations --host alpha --duplicate-generation 128 --yes
 ```
 
-Selecting **All Hosts** falls back to `old` for every host, since generation
-numbers mean different things on different machines.
+Selecting **All Hosts** falls back to `old` for removal and disables
+duplication, since generation numbers mean different things on different
+machines.
 
 If a host cannot be reached, the picker says so and selects nothing for that
 profile rather than guessing.
