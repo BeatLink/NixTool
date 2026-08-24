@@ -22,6 +22,8 @@
                 # nix-inspect lists no x86_64-darwin, where naming it fails evaluation rather than the command.
                 runtimeTools =
                     [
+                        pkgs.curl
+                        pkgs.jq
                         pkgs.nh
                         pkgs.sshpass
                     ]

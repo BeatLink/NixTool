@@ -258,6 +258,7 @@ $ nixtool list
 Maintenance  (maintenance)
   maintenance/run-all                Run All Tasks  [destructive, host]
   maintenance/flake-update           Run Nix Flake Update
+  maintenance/package-status         Check Package Status
   maintenance/export-dconf           Export Dconf Settings
   maintenance/rebuild                Run Nixos Rebuild  [host]
   maintenance/rebuild-offline        Run Nixos Rebuild (Attached Disk)  [destructive, host]
@@ -359,6 +360,7 @@ with no arguments, but lets you pass `-c` unambiguously.
 | Id | Does | Host | Destructive | Variables |
 |---|---|:--:|:--:|---|
 | `flake-update` | `nix flake update --refresh` | – | – | – |
+| `package-status` | A package's version on master, unstable and stable, with hydra's build of each | – | – | `PACKAGE`, `SYSTEM` |
 | `export-dconf` | Dumps every dconf path listed in the flake's `dconf-settings.json` files back into the flake | – | – | – |
 | `rebuild` | `nixos-rebuild` against `<FLAKEPATH>#<HOSTNAME>` over SSH | ✓ | – | `ACTION` |
 | `rebuild-offline` | Activates a generation on a host whose disk is attached to this machine | ✓ | ✓ | `ENCRYPTION_KEY` |
@@ -376,6 +378,41 @@ with no arguments, but lets you pass `-c` unambiguously.
 `run-all` is a composite: it expands into the sub-commands it contains,
 resolved as a single queue. Pruning generations and collecting garbage are two
 of those steps; they are no longer separate menu entries of their own.
+
+### Checking a package before an update
+
+`package-status` answers whether a version bump has landed and whether hydra has
+built it, without a rebuild:
+
+```
+$ nixtool run package-status --package thunderbird
+
+---- thunderbird: versions ----
+CHANNEL   BRANCH          VERSION
+master    master          154.0
+unstable  nixos-unstable  153.0.3
+stable    nixos-26.05     153.0.3
+
+hydra builds thunderbird-unwrapped; the thunderbird job is stale or gone
+
+---- thunderbird-unwrapped: hydra (x86_64-linux) ----
+CHANNEL   JOBSET                VERSION      STATUS        BUILT
+master    nixpkgs/trunk         153.0.3      Success       2026-08-19  https://hydra.nixos.org/build/342770474
+unstable  nixos/trunk-combined  153.0.3      Success       2026-08-19  https://hydra.nixos.org/build/342651829
+stable    nixos/release-26.05   153.0.3      Success       2026-08-21  https://hydra.nixos.org/build/342960945
+```
+
+The stable branch is resolved from nixpkgs' own branch list, so a new NixOS
+release needs no change here. A `Success` on the channel jobset is what puts a
+build in the binary cache; a `Failed` or `Building` row is why a rebuild is
+about to compile that package locally.
+
+Some packages are wrapped, and the wrapper attribute keeps a hydra job that
+stopped being evaluated years ago — `thunderbird` above still reports a 2021
+build. When the job matches no channel version, the `-unwrapped` job is looked
+up instead and the substitution is stated in the output.
+
+`--system aarch64-linux` reads the phone's jobs instead of the laptop's.
 
 ### The generation picker
 

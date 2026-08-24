@@ -619,6 +619,94 @@ report_unpersisted = {
     "run_on_remote": True
 }
 
+PACKAGE_STATUS_SCRIPT = r"""set -u
+HYDRA=https://hydra.nixos.org
+
+# Read from nixpkgs itself, so a new NixOS release needs no edit here.
+stable=$(git ls-remote --heads https://github.com/NixOS/nixpkgs 'refs/heads/nixos-*' 2>/dev/null | grep -oE 'nixos-[0-9][0-9]\.[0-9][0-9]$' | sort -V | tail -1)
+[ -n "$stable" ] || { echo "could not resolve the current stable branch from nixpkgs" >&2; exit 1; }
+
+version_of() { nix eval --raw "github:NixOS/nixpkgs/$1#$PKG.version" 2>/dev/null; }
+hydra_json() { curl -sL -H 'Accept: application/json' "$HYDRA/job/$1/$2.$SYSTEM/latest" 2>/dev/null; }
+hydra_field() { printf '%s' "$2" | jq -r "$1" 2>/dev/null; }
+hydra_version() { hydra_field '.nixname // "" | sub("^.*?-(?=[0-9])"; "")' "$1"; }
+
+printf '\n---- %s: versions ----\n' "$PKG"
+printf '%-9s %-15s %s\n' CHANNEL BRANCH VERSION
+master_version=$(version_of master)
+unstable_version=$(version_of nixos-unstable)
+stable_version=$(version_of "$stable")
+printf '%-9s %-15s %s\n' master master "${master_version:-(no such attribute)}"
+printf '%-9s %-15s %s\n' unstable nixos-unstable "${unstable_version:-(no such attribute)}"
+printf '%-9s %-15s %s\n' stable "$stable" "${stable_version:-(no such attribute)}"
+
+# Hydra builds the unwrapped derivation for browser-style packages, and the wrapper job left behind is years stale.
+# The test is whether the job matches any channel: hydra trails a branch by hours, never by whole releases.
+known_version() {
+    [ -n "$1" ] && { [ "$1" = "$master_version" ] || [ "$1" = "$unstable_version" ] || [ "$1" = "$stable_version" ]; }
+}
+attr=$PKG
+if ! known_version "$(hydra_version "$(hydra_json nixpkgs/trunk "$PKG")")"; then
+    if known_version "$(hydra_version "$(hydra_json nixpkgs/trunk "$PKG-unwrapped")")"; then
+        attr=$PKG-unwrapped
+        printf '\nhydra builds %s; the %s job is stale or gone\n' "$attr" "$PKG"
+    fi
+fi
+
+# nixpkgs/trunk is master itself; the channel jobsets prefix every job with `nixpkgs.`.
+printf '\n---- %s: hydra (%s) ----\n' "$attr" "$SYSTEM"
+printf '%-9s %-21s %-12s %-13s %s\n' CHANNEL JOBSET VERSION STATUS BUILT
+for target in "master nixpkgs/trunk $attr" "unstable nixos/trunk-combined nixpkgs.$attr" "stable nixos/release-${stable#nixos-} nixpkgs.$attr"; do
+    set -- $target
+    json=$(hydra_json "$2" "$3")
+    if [ -z "$(hydra_field '.nixname // empty' "$json")" ]; then
+        printf '%-9s %-21s %s\n' "$1" "$2" "(no such job)"
+        continue
+    fi
+    status=$(hydra_field 'if .finished != 1 then "Building" else {"0":"Success","1":"Failed","2":"Dep failed","3":"Aborted","4":"Cancelled","6":"Failed (output)","7":"Timed out","9":"Aborted","10":"Unsupported","11":"Log limit"}[.buildstatus|tostring] // "Status \(.buildstatus)" end' "$json")
+    built=$(date -d "@$(hydra_field '.timestamp // 0' "$json")" '+%Y-%m-%d' 2>/dev/null)
+    printf '%-9s %-21s %-12s %-13s %s  %s/build/%s\n' "$1" "$2" "$(hydra_version "$json")" "$status" "$built" "$HYDRA" "$(hydra_field '.id' "$json")"
+done
+"""
+
+def get_package_status_commands(config, values=None, hostname=None):
+    """One script per run: the three channel versions, then hydra's build of each.
+
+    The two halves share the resolved stable branch and the versions the hydra
+    lookup compares its job against, so they are one command rather than one per
+    channel. Nothing is built or fetched into the store beyond the flake
+    metadata `nix eval` already needs.
+    """
+    values = values or {}
+    package = shlex.quote(values.get("PACKAGE", ""))
+    system = shlex.quote(values.get("SYSTEM") or "x86_64-linux")
+    return [f"PKG={package}\nSYSTEM={system}\n{PACKAGE_STATUS_SCRIPT}"]
+
+package_status = {
+    "id": "package-status",
+    "name": "Check Package Status",
+    "description": "Show a package's version on master, unstable and stable, and hydra's build status for each.",
+    "commands": [
+        get_package_status_commands
+    ],
+    "menu_variables": {
+        "PACKAGE": {
+            "title": "Package attribute (e.g. thunderbird)",
+            "type": "text"
+        },
+        "SYSTEM": {
+            "title": "Select a system to read hydra for",
+            "type": "list",
+            "default": "x86_64-linux",
+            "options": {
+                "x86_64-linux": "x86_64-linux - the laptop and the servers",
+                "aarch64-linux": "aarch64-linux - the phone"
+            }
+        }
+    },
+    "run_on_remote": False
+}
+
 def get_inspect_command(config):
     """nix-inspect pointed at the configured flake, or at its own default.
 
@@ -650,6 +738,7 @@ maintenance_commands = {
     "commands": [
         run_all,
         nix_flake_update,
+        package_status,
         export_dconf,
         nix_rebuild,
         nix_rebuild_offline,
