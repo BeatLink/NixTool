@@ -450,7 +450,7 @@ Data on the selected disk(s) will be permanently erased. Double-check your devic
         "if [ <MIRROR_DRIVE> != none ]; then sudo sgdisk --zap-all <MIRROR_DRIVE> && sudo sgdisk --new=1:0:0 --typecode=1:BF00 --change-name=1:zfs-data-partition <MIRROR_DRIVE> && sudo partprobe <MIRROR_DRIVE> && sudo udevadm settle; fi",
         "sudo zpool create -f -d -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|')",
         "sudo zpool upgrade data-pool-<HOSTNAME>",
-        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=lz4 -o recordsize=1M -o xattr=sa -o acltype=posix -o atime=off -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage",
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=lz4 -o recordsize=1M -o copies=2 -o xattr=sa -o acltype=posix -o atime=off -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage",
         "if [ <MIRROR_DRIVE> != none ]; then sudo zpool attach data-pool-<HOSTNAME> $(lsblk -rno NAME <DATA_DRIVE> | sed -n 2p | sed 's|^|/dev/|') $(lsblk -rno NAME <MIRROR_DRIVE> | sed -n 2p | sed 's|^|/dev/|'); fi"
     ],
     "menu_variables": {
@@ -587,7 +587,7 @@ Any existing partition 2 and the pool on it are destroyed. Partition 1 is not.
         "sudo zpool create -f -d -R /mnt -o ashift=12 -o autotrim=on -o feature@zstd_compress=enabled -m none data-pool-<HOSTNAME> $(lsblk -rno PATH <DATA_DRIVE> | sed -n 3p)",
         "sudo zpool upgrade data-pool-<HOSTNAME>",
         # keylocation=prompt because clevis supplies the passphrase at boot.
-        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=lz4 -o recordsize=1M -o xattr=sa -o acltype=posix -o atime=off -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage",
+        "printf '%s' <PASSPHRASE> | sudo zfs create -o encryption=on -o keyformat=passphrase -o keylocation=prompt -o compression=lz4 -o recordsize=1M -o copies=2 -o xattr=sa -o acltype=posix -o atime=off -o com.sun:auto-snapshot=true -o mountpoint=/Storage data-pool-<HOSTNAME>/storage",
         # Leave nothing imported here. The card is going to another machine, and
         # a pool left imported is one that has to be exported before the card can
         # be pulled safely.
