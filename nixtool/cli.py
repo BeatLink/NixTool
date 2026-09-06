@@ -141,30 +141,41 @@ def collect_values(
             resolver.validate_choice(name, spec, value)
             values[name] = value
 
-    return resolver.generate_auto_values(variables, values)
+    return resolver.generate_auto_values(
+        variables, resolver.apply_defaults(variables, values)
+    )
 
 
 def prompt_for_generations(name, spec, cfg, hostname, stream=None) -> str:
-    """Show what the host holds, then ask which of it to remove.
+    """Show what the host holds, then ask which of it to remove or duplicate.
 
     The CLI's counterpart to the TUI's picker: the same listing, parsed the
     same way, so neither front end asks you to guess what exists.
     """
     stream = sys.stdout if stream is None else stream
     profile = spec.get("profile", "system")
+    duplicating = profile == generations.DUPLICATE
     found, error = generations.read(profile, cfg, hostname)
+    listed = "system" if duplicating else profile
     where = f" on {hostname}" if hostname else ""
-    print(f"\n{spec.get('title') or name} ({profile} profile{where})", file=stream)
+    print(f"\n{spec.get('title') or name} ({listed} profile{where})", file=stream)
     if error:
         print(f"  could not list generations: {error}", file=stream)
     elif not found:
         print("  no generations found", file=stream)
     for entry in found:
-        marker = "   <- current, cannot be removed" if entry["current"] else ""
+        marker = ""
+        if entry["current"]:
+            marker = "   <- current" if duplicating else (
+                "   <- current, cannot be removed"
+            )
         print(f"  {entry['id']:>5}   {entry['date']}{marker}", file=stream)
-    answer = input(
-        "Generations to remove (numbers, 'old', '+N', or 'none'): "
-    ).strip()
+    question = (
+        "Generation to duplicate as the newest (a number, or 'none'): "
+        if duplicating
+        else "Generations to remove (numbers, 'old', '+N', or 'none'): "
+    )
+    answer = input(question).strip()
     return answer or generations.NONE
 
 

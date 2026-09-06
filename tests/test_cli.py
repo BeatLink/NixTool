@@ -537,6 +537,42 @@ def test_only_the_selected_profile_is_deleted():
     ]
 
 
+def test_duplication_copies_a_generation_forward():
+    """--set adds a generation; it does not move the pointer to the old one."""
+    cfg = {"user": "admin", "hosts": {"alpha": "10.0.0.1"}}
+    assert generations.duplicate_command("128", cfg, "alpha") == (
+        "ssh admin@10.0.0.1 sudo nix-env --profile /nix/var/nix/profiles/system"
+        " --set /nix/var/nix/profiles/system-128-link"
+    )
+    assert generations.duplicate_command("none", cfg, "alpha") == ""
+    assert generations.duplicate_command(None, cfg, "alpha") == ""
+
+
+def test_duplication_takes_one_generation_and_not_a_rule():
+    assert generations.normalise_one("128") == "128"
+    assert generations.normalise_one("none") == ""
+    assert generations.normalise_one("") == ""
+    for rejected in ("old", "+5", "1 2", "1; rm -rf /"):
+        with pytest.raises(generations.GenerationError):
+            generations.normalise_one(rejected)
+
+
+def test_duplication_runs_before_any_deletion():
+    """Otherwise the delete could take the closure the copy was made from."""
+    commands = commands_module.get_generation_commands(
+        {},
+        {
+            "DUPLICATE_GENERATION": "3",
+            "SYSTEM_GENERATIONS": "old",
+            "USER_GENERATIONS": "none",
+            "RUN_GC": "yes",
+        },
+    )
+    assert "--set /nix/var/nix/profiles/system-3-link" in commands[0]
+    assert "--delete-generations old" in commands[1]
+    assert commands[-1] == "sudo nix-collect-garbage -d"
+
+
 def test_garbage_collection_is_appended_when_asked():
     commands = commands_module.get_generation_commands(
         {}, {"SYSTEM_GENERATIONS": "old", "USER_GENERATIONS": "none", "RUN_GC": "yes"}
@@ -561,8 +597,30 @@ def test_the_generation_command_still_targets_a_host():
     assert registry.needs_host(node)
     assert registry.is_destructive(node)
     assert sorted(registry.collect_variables(node)) == [
-        "RUN_GC", "SYSTEM_GENERATIONS", "USER_GENERATIONS",
+        "DUPLICATE_GENERATION", "RUN_GC", "SYSTEM_GENERATIONS", "USER_GENERATIONS",
     ]
+
+
+def test_a_declared_default_keeps_the_other_flags_optional(config_file, capsys):
+    """The documented duplication run names one flag and nothing else."""
+    code = main([
+        "run", "manage-generations", "--host", "alpha",
+        "--duplicate-generation", "128", "-n",
+    ])
+    assert code == EXIT_OK
+    out = capsys.readouterr().out
+    assert "--set /nix/var/nix/profiles/system-128-link" in out
+    assert "delete-generations" not in out
+    assert "nix-collect-garbage" not in out
+
+
+def test_a_bad_duplication_is_a_usage_error(config_file, capsys):
+    code = main([
+        "run", "manage-generations", "--host", "alpha",
+        "--duplicate-generation", "old", "-n",
+    ])
+    assert code != EXIT_OK
+    assert "expected a single generation number" in capsys.readouterr().err
 
 
 def test_generations_can_be_driven_from_flags(config_file, capsys):

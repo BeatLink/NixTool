@@ -19,7 +19,7 @@ from nixtool.main import NixOSManager
 from nixtool.options_widget import OptionsWidget
 from nixtool.generation_selector import GenerationSelector
 from nixtool.plan_widget import PlanWidget
-from textual.widgets import Button, SelectionList
+from textual.widgets import Button, Select, SelectionList
 
 
 @pytest.fixture
@@ -307,6 +307,40 @@ async def test_selecting_all_removable_leaves_the_current_alone(config_path, fak
         assert app.selected_vars["SYSTEM_GENERATIONS"] == "1 2 3"
 
 
+async def test_picking_a_duplicate_copies_it_forward_first(config_path, fake_generations):
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        picker = await _reach_picker(pilot, app)
+        duplicate = picker.query_one("#gen-duplicate", Select)
+        # Past the blank "none" entry, and without the current generation,
+        # which it would be a no-op to copy forward.
+        assert [value for _, value in duplicate._options[1:]] == [1, 2, 3]
+        duplicate.value = 2
+        picker.query_one("#gen-system", SelectionList).select(1)
+        picker.query_one("#gen-continue", Button).press()
+        await pilot.pause()
+        assert app.selected_vars["DUPLICATE_GENERATION"] == "2"
+        await select(pilot, "variable-menu", "no")
+        assert app.command_queue == [
+            "ssh admin@10.0.0.1 sudo nix-env"
+            " --profile /nix/var/nix/profiles/system"
+            " --set /nix/var/nix/profiles/system-2-link",
+            "ssh admin@10.0.0.1 sudo nix-env"
+            " --profile /nix/var/nix/profiles/system --delete-generations 1",
+        ]
+
+
+async def test_nothing_is_duplicated_unless_one_is_picked(config_path, fake_generations):
+    app = NixOSManager(config_path)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        picker = await _reach_picker(pilot, app)
+        picker.query_one("#gen-continue", Button).press()
+        await pilot.pause()
+        assert app.selected_vars["DUPLICATE_GENERATION"] == "none"
+
+
 async def test_skipping_deletion_still_allows_garbage_collection(config_path, fake_generations):
     app = NixOSManager(config_path)
     async with app.run_test() as pilot:
@@ -350,6 +384,9 @@ async def test_all_hosts_falls_back_to_the_coarse_rule(config_path, fake_generat
         picker.query_one("#gen-continue", Button).press()
         await pilot.pause()
         assert app.selected_vars["SYSTEM_GENERATIONS"] == "old"
+        # Generation numbers mean different things per machine, so no copy.
+        assert app.selected_vars["DUPLICATE_GENERATION"] == "none"
+        assert picker.query_one("#gen-duplicate", Select).disabled
         await select(pilot, "variable-menu", "no")
         assert [host for host in app.command_queue] == [
             "ssh admin@10.0.0.1 sudo nix-env"

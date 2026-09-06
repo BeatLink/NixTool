@@ -12,7 +12,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Label, SelectionList
+from textual.widgets import Button, Label, Select, SelectionList
 from textual.widgets.selection_list import Selection
 
 from . import generations as gen
@@ -64,6 +64,20 @@ class GenerationSelector(Widget):
     #gen-user-pane {
         margin-left: 1;
     }
+    #gen-duplicate-row {
+        width: 100%;
+        height: auto;
+        align: center middle;
+        margin-top: 1;
+    }
+    #gen-duplicate-label {
+        height: auto;
+        color: $primary;
+        padding: 1 1 0 0;
+    }
+    #gen-duplicate {
+        width: 40;
+    }
     #gen-summary {
         width: 100%;
         height: auto;
@@ -100,7 +114,11 @@ class GenerationSelector(Widget):
         # Per profile: the parsed listing and the error that stopped it.
         self._found = {"system": [], "user": []}
         self._errors = {"system": None, "user": None}
-        self._variables = {"system": "SYSTEM_GENERATIONS", "user": "USER_GENERATIONS"}
+        self._variables = {
+            "system": "SYSTEM_GENERATIONS",
+            "user": "USER_GENERATIONS",
+            gen.DUPLICATE: "DUPLICATE_GENERATION",
+        }
         # "All Hosts" has no single listing to show; see _show_fleet_notice.
         self._fleet = False
 
@@ -114,6 +132,9 @@ class GenerationSelector(Widget):
                 with Vertical(classes="gen-pane", id="gen-user-pane"):
                     yield Label("User profile", classes="gen-pane-heading")
                     yield SelectionList(id="gen-user", classes="gen-list")
+            with Horizontal(id="gen-duplicate-row"):
+                yield Label("Duplicate as newest:", id="gen-duplicate-label")
+                yield Select([], id="gen-duplicate", prompt="none")
             yield Label(id="gen-summary")
             with Horizontal(id="gen-buttons"):
                 yield Button("Skip deletion", id="gen-skip", variant="default")
@@ -147,6 +168,7 @@ class GenerationSelector(Widget):
             self._errors[profile] = error
             self._fill(profile)
 
+        self._fill_duplicate()
         self._update_summary()
 
     def _show_fleet_notice(self) -> None:
@@ -168,6 +190,9 @@ class GenerationSelector(Widget):
             "Continue removes all but the current generation on each."
         )
         self.query_one("#gen-continue", Button).label = "Remove all old"
+        duplicate = self.query_one("#gen-duplicate", Select)
+        duplicate.set_options([])
+        duplicate.disabled = True
 
     def _fill(self, profile: str) -> None:
         listing = self.query_one(f"#gen-{profile}", SelectionList)
@@ -195,6 +220,27 @@ class GenerationSelector(Widget):
             listing.add_option(
                 Selection(f"{entry['id']:>5}   {entry['date']}", entry["id"], False)
             )
+
+    def _fill_duplicate(self) -> None:
+        """Offer the system generations that could be copied forward.
+
+        The current one is left out: copying it forward would produce a
+        generation identical to the one already in use.
+        """
+        picker = self.query_one("#gen-duplicate", Select)
+        offered = [
+            entry for entry in self._found["system"]
+            if not self._errors["system"] and not entry["current"]
+        ]
+        picker.set_options(
+            (f"{entry['id']:>5}   {entry['date']}", entry["id"]) for entry in offered
+        )
+        picker.disabled = not offered
+
+    def _duplicate_choice(self) -> str:
+        """The picked generation as a plain number, or "none"."""
+        value = self.query_one("#gen-duplicate", Select).value
+        return str(value) if isinstance(value, int) else gen.NONE
 
     def _removable(self, profile: str) -> list[int]:
         if self._errors[profile]:
@@ -244,15 +290,22 @@ class GenerationSelector(Widget):
     def _continue(self, event: Button.Pressed) -> None:
         event.stop()
         if self._fleet:
-            self._emit({name: "old" for name in self._variables.values()})
+            # Duplication is per-machine, so the fleet rule covers deletion only.
+            self._emit({
+                name: (gen.NONE if profile == gen.DUPLICATE else "old")
+                for profile, name in self._variables.items()
+            })
             return
-        self._emit(
-            {
-                self._variables[profile]: gen.normalise(self._selection(profile))
-                or gen.NONE
-                for profile in ("system", "user")
-            }
-        )
+        values = {
+            self._variables[profile]: gen.normalise(self._selection(profile))
+            or gen.NONE
+            for profile in ("system", "user")
+            if profile in self._variables
+        }
+        duplicate = self._variables.get(gen.DUPLICATE)
+        if duplicate:
+            values[duplicate] = self._duplicate_choice()
+        self._emit(values)
 
     @on(Button.Pressed, "#gen-skip")
     def _skip(self, event: Button.Pressed) -> None:

@@ -10,10 +10,17 @@ import re
 import shlex
 import subprocess
 
+SYSTEM_PROFILE = "/nix/var/nix/profiles/system"
+
+# A generations variable can also name one generation to copy forward rather
+# than a set to delete. That reads the system profile, so it lists like one.
+DUPLICATE = "duplicate"
+
 # The system profile needs root; the user profile is the caller's own.
 PROFILES = {
-    "system": "sudo nix-env --profile /nix/var/nix/profiles/system",
+    "system": f"sudo nix-env --profile {SYSTEM_PROFILE}",
     "user": "nix-env",
+    DUPLICATE: f"sudo nix-env --profile {SYSTEM_PROFILE}",
 }
 
 # "   42   2026-03-11 17:55:02   (current)"
@@ -25,6 +32,9 @@ GENERATION_LINE = re.compile(
 # the current one, or everything older than the last N. Checked because the
 # value reaches a shell, and on the CLI it comes from a flag.
 SELECTION = re.compile(r"^(old|\+\d+|\d+( +\d+)*)$")
+
+# Duplication copies exactly one generation, so the blunt rules do not apply.
+SINGLE = re.compile(r"^\d+$")
 
 NONE = "none"
 
@@ -65,6 +75,24 @@ def delete_command(
     )
 
 
+def duplicate_command(selection, config: dict, hostname: str | None) -> str:
+    """A new system generation holding an older one, or "" when none was picked.
+
+    ``--set`` appends a generation rather than moving the pointer, so the one
+    that was copied stays where it is and a later ``--delete-generations old``
+    still has something to remove. The generation link is passed as-is:
+    nix-env resolves it to the store path itself, which keeps the command free
+    of a substitution that would otherwise expand on the wrong side of an ssh.
+    """
+    selection = normalise_one(selection)
+    if not selection:
+        return ""
+    return (
+        f"{remote_prefix(config, hostname)}{PROFILES[DUPLICATE]}"
+        f" --set {SYSTEM_PROFILE}-{selection}-link"
+    )
+
+
 def collect_garbage_command(config: dict, hostname: str | None) -> str:
     return f"{remote_prefix(config, hostname)}sudo nix-collect-garbage -d"
 
@@ -82,6 +110,21 @@ def normalise(selection) -> str:
         raise GenerationError(
             f"invalid generation selection '{selection}'; expected generation "
             "numbers, 'old', '+N', or 'none'"
+        )
+    return selection
+
+
+def normalise_one(selection) -> str:
+    """One generation number as a shell-safe argument, or "" for nothing to do."""
+    if isinstance(selection, (list, tuple, set)):
+        selection = " ".join(str(item) for item in selection)
+    selection = str("" if selection is None else selection).strip()
+    if not selection or selection.lower() == NONE:
+        return ""
+    if not SINGLE.match(selection):
+        raise GenerationError(
+            f"invalid generation to duplicate '{selection}'; expected a single "
+            "generation number, or 'none'"
         )
     return selection
 

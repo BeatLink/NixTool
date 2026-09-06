@@ -57,6 +57,22 @@ def generate_auto_values(variables: dict, supplied: dict) -> dict:
     return values
 
 
+def apply_defaults(variables: dict, supplied: dict) -> dict:
+    """Fill in each declared default that nothing else has answered.
+
+    Last in the chain, after the flag, the environment, ``--set`` and the
+    prompt, so a variable carrying a default is optional on the command line
+    rather than a missing-variable error in an unattended run.
+    """
+    values = dict(supplied)
+    for name, spec in variables.items():
+        if name in values or "default" not in spec:
+            continue
+        validate_choice(name, spec, spec["default"])
+        values[name] = spec["default"]
+    return values
+
+
 def missing_variables(variables: dict, values: dict) -> list[str]:
     """Names of required variables that still have no value."""
     return [name for name in variables if name not in values]
@@ -67,8 +83,13 @@ def validate_choice(name: str, spec: dict, value: str) -> None:
     if spec.get("type") == "generations":
         # Checked here rather than at build time so a bad --system-generations
         # is a usage error, and never reaches a shell.
+        check = (
+            generations.normalise_one
+            if spec.get("profile") == generations.DUPLICATE
+            else generations.normalise
+        )
         try:
-            generations.normalise(value)
+            check(value)
         except generations.GenerationError as exc:
             raise ResolutionError(str(exc)) from exc
         return

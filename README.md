@@ -508,6 +508,7 @@ Variable types:
 | `list` | Restricted to declared options; invalid values are rejected up front. |
 | `text` | Free text. |
 | `disk` | A device path. Use `nixtool run ... --dry-run` to check what you typed; the TUI offers a live `lsblk` picker. `MIRROR_DRIVE` accepts `none`. |
+| `generations` | The chosen host's generations, listed before you pick. Removal takes a list of numbers, `old` or `+N`; duplication takes one number. Both accept `none`. |
 | `password` | Secret — see below. |
 | `textarea` | Multi-line secret (SSH keys) — see below. |
 | `uuid` | Generated automatically. Pass the flag explicitly to pin it when re-running against an existing pool. |
