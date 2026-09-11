@@ -6,6 +6,7 @@ here is pure enough to test without a nix store: the commands are built as
 strings and the output is parsed from text.
 """
 
+import json
 import re
 import shlex
 import subprocess
@@ -60,6 +61,15 @@ def remote_prefix(config: dict, hostname: str | None) -> str:
 
 def list_command(profile: str, config: dict, hostname: str | None) -> str:
     return f"{remote_prefix(config, hostname)}{PROFILES[profile]} --list-generations"
+
+
+def nixos_list_command(config: dict, hostname: str | None) -> str:
+    """``nixos-rebuild list-generations --json``, which nix-env has no answer to.
+
+    It reads the profile links rather than the store, so unlike the nix-env
+    listing it needs no sudo.
+    """
+    return f"{remote_prefix(config, hostname)}nixos-rebuild list-generations --json"
 
 
 def delete_command(
@@ -143,13 +153,30 @@ def parse(text: str) -> list[dict]:
     return found
 
 
-def read(profile: str, config: dict, hostname: str | None, timeout: int = 30):
-    """Run the listing for one profile and parse it.
+def parse_nixos_json(text: str) -> list[dict]:
+    """The same shape as ``parse``, plus the columns nix-env cannot report."""
+    try:
+        entries = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    found = []
+    for entry in entries:
+        if not isinstance(entry, dict) or "generation" not in entry:
+            continue
+        found.append({
+            "id": int(entry["generation"]),
+            "date": str(entry.get("date", "")),
+            "current": bool(entry.get("current")),
+            "nixos": str(entry.get("nixosVersion", "")),
+            "kernel": str(entry.get("kernelVersion", "")),
+        })
+    return sorted(found, key=lambda entry: entry["id"])
 
-    Returns ``(generations, error)``: a failure to reach the host is reported
-    rather than raised, so one unreachable profile still lets the other show.
-    """
-    command = list_command(profile, config, hostname)
+
+def _run(command: str, timeout: int):
+    """``(stdout, error)`` from one listing, with failure reported not raised."""
     try:
         result = subprocess.run(
             command,
@@ -159,11 +186,35 @@ def read(profile: str, config: dict, hostname: str | None, timeout: int = 30):
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return [], f"timed out after {timeout}s: {command}"
+        return None, f"timed out after {timeout}s: {command}"
     if result.returncode != 0:
         detail = (result.stderr or "").strip().splitlines()
-        return [], (detail[-1] if detail else f"exit code {result.returncode}")
-    return parse(result.stdout), None
+        return None, (detail[-1] if detail else f"exit code {result.returncode}")
+    return result.stdout, None
+
+
+def read(profile: str, config: dict, hostname: str | None, timeout: int = 30):
+    """Run the listing for one profile and parse it.
+
+    The system profile is read through nixos-rebuild first, because a date and
+    a number do not say which generation is which; the NixOS version and the
+    kernel do. Anything that does not come back as usable JSON falls through to
+    nix-env, which every profile understands and which needs no NixOS at all.
+
+    Returns ``(generations, error)``: a failure to reach the host is reported
+    rather than raised, so one unreachable profile still lets the other show.
+    """
+    if profile in ("system", DUPLICATE):
+        output, error = _run(nixos_list_command(config, hostname), timeout)
+        if error is None:
+            parsed = parse_nixos_json(output)
+            if parsed:
+                return parsed, None
+
+    output, error = _run(list_command(profile, config, hostname), timeout)
+    if error is not None:
+        return [], error
+    return parse(output), None
 
 
 def describe(generations: list[dict]) -> str:

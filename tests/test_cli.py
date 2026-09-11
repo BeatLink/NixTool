@@ -484,6 +484,62 @@ def test_generation_listing_ignores_noise():
     assert generations.parse("") == []
 
 
+NIXOS_LISTING = """[
+  {"generation": 249, "date": "2026-09-09 09:54:39", "nixosVersion": "26.11.20260908.d6524aa",
+   "kernelVersion": "6.18.50", "current": false},
+  {"generation": 250, "date": "2026-09-09 11:47:53", "nixosVersion": "26.11.20260908.d6524aa",
+   "kernelVersion": "6.18.51", "current": true}
+]"""
+
+
+def test_the_nixos_listing_carries_version_and_kernel():
+    parsed = generations.parse_nixos_json(NIXOS_LISTING)
+    assert [g["id"] for g in parsed] == [249, 250]
+    assert parsed[1]["current"] and not parsed[0]["current"]
+    assert parsed[1]["kernel"] == "6.18.51"
+    assert parsed[0]["nixos"] == "26.11.20260908.d6524aa"
+
+
+def test_a_listing_that_is_not_usable_json_falls_back_rather_than_crashing():
+    # nixos-rebuild is missing, too old, or answering with something else.
+    assert generations.parse_nixos_json("not json") == []
+    assert generations.parse_nixos_json('{"generation": 1}') == []
+    assert generations.parse_nixos_json("[]") == []
+
+
+def test_the_system_profile_prefers_nixos_rebuild(monkeypatch):
+    asked = []
+
+    def fake_run(command, timeout):
+        asked.append(command)
+        return NIXOS_LISTING, None
+
+    monkeypatch.setattr(generations, "_run", fake_run)
+    found, error = generations.read("system", {}, None)
+    assert error is None
+    assert asked == ["nixos-rebuild list-generations --json"]
+    assert found[0]["kernel"] == "6.18.50"
+
+
+def test_the_user_profile_and_a_silent_host_fall_back_to_nix_env(monkeypatch):
+    asked = []
+
+    def fake_run(command, timeout):
+        asked.append(command)
+        if "nixos-rebuild" in command:
+            return None, "command not found"
+        return LISTING, None
+
+    monkeypatch.setattr(generations, "_run", fake_run)
+    found, _ = generations.read("user", {}, None)
+    assert [g["id"] for g in found] == [1, 2, 3, 4]
+    assert not any("nixos-rebuild" in command for command in asked)
+
+    found, _ = generations.read("system", {}, None)
+    assert [g["id"] for g in found] == [1, 2, 3, 4]
+    assert asked[-2] == "nixos-rebuild list-generations --json"
+
+
 def test_generation_selection_accepts_what_nix_env_accepts():
     assert generations.normalise([3, 1, 2]) == "1 2 3"
     assert generations.normalise("old") == "old"

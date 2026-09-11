@@ -19,6 +19,15 @@ from . import generations as gen
 from .host_selector import ALL_HOSTS
 
 
+def _row(entry: dict) -> str:
+    """One generation as a line, carrying whatever the listing knew about it."""
+    extra = "  ".join(
+        part for part in (entry.get("nixos"), entry.get("kernel")) if part
+    )
+    line = f"{entry['id']:>5}   {entry['date']}"
+    return f"{line}   {extra}" if extra else line
+
+
 class GenerationSelector(Widget):
     """Lists a host's generations and collects the ones to remove."""
 
@@ -217,9 +226,7 @@ class GenerationSelector(Widget):
         for entry in self._found[profile]:
             if entry["current"]:
                 continue
-            listing.add_option(
-                Selection(f"{entry['id']:>5}   {entry['date']}", entry["id"], False)
-            )
+            listing.add_option(Selection(_row(entry), entry["id"], False))
 
     def _fill_duplicate(self) -> None:
         """Offer the system generations that could be copied forward.
@@ -232,9 +239,7 @@ class GenerationSelector(Widget):
             entry for entry in self._found["system"]
             if not self._errors["system"] and not entry["current"]
         ]
-        picker.set_options(
-            (f"{entry['id']:>5}   {entry['date']}", entry["id"]) for entry in offered
-        )
+        picker.set_options((_row(entry), entry["id"]) for entry in offered)
         picker.disabled = not offered
 
     def _duplicate_choice(self) -> str:

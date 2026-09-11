@@ -169,7 +169,11 @@ def prompt_for_generations(name, spec, cfg, hostname, stream=None) -> str:
             marker = "   <- current" if duplicating else (
                 "   <- current, cannot be removed"
             )
-        print(f"  {entry['id']:>5}   {entry['date']}{marker}", file=stream)
+        extra = "  ".join(
+            part for part in (entry.get("nixos"), entry.get("kernel")) if part
+        )
+        line = f"  {entry['id']:>5}   {entry['date']}"
+        print(f"{line}   {extra}{marker}" if extra else f"{line}{marker}", file=stream)
     question = (
         "Generation to duplicate as the newest (a number, or 'none'): "
         if duplicating
