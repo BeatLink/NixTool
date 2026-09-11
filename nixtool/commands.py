@@ -603,18 +603,61 @@ Any existing partition 2 and the pool on it are destroyed. Partition 1 is not.
     "run_on_remote": False
 }
 
+UNPERSISTED_ROOTS_SCRIPT = r"""set -u
+root=$(findmnt -no SOURCE /)
+home=$(findmnt -no SOURCE /home)
+
+# Read the roots off the mounts rather than spelling out a pool name: a host on the btrfs-luks
+# layout has no pool, and one on ZFS names its pool after itself only by convention.
+case $(findmnt -no FSTYPE /) in
+    zfs)
+        sudo zfs list -o name,used,mountpoint "$root" "$home"
+        ;;
+    btrfs)
+        printf '%-6s %s\n' / "$root" /home "$home"
+        # A nested subvolume is deleted along with its parent, but it carries its own device
+        # number, so the tree walks below stop at it and never count what is inside.
+        printf '\nnested subvolumes, discarded with their parent:\n'
+        for parent in / /home; do
+            sudo btrfs subvolume list -o "$parent" | sed 's|.* path @[^/]*/||' | while read -r nested; do
+                sudo du -shx "${parent%/}/$nested" 2>/dev/null
+            done
+        done
+        ;;
+    *)
+        echo "/ is $(findmnt -no FSTYPE /); nothing here is rolled back" >&2
+        ;;
+esac
+"""
+
+
+def get_unpersisted_commands(config, values=None, hostname=None):
+    """The report's four steps, run on the host whose rollback is being inspected.
+
+    Every step reads that host's own mounts, so without the ssh prefix the whole
+    report describes the machine nixtool is running on instead -- the same trap
+    generation listing used to fall into.
+    """
+    prefix = generations.remote_prefix(config, hostname)
+    label = shlex.quote(f"---- {hostname or 'this machine'}: rolled-back roots ----")
+    steps = [
+        f"echo {label} && {UNPERSISTED_ROOTS_SCRIPT}",
+        # --du without -L, because a depth limit totals only the levels it prints.
+        'echo "---- / ----" && sudo tree -x -a --du -h --sort=size / 2>/dev/null | sed -n \'1,40p;$p\'',
+        'echo "---- /home ----" && sudo tree -x -a --du -h --sort=size /home 2>/dev/null | sed -n \'1,40p;$p\'',
+        'echo "---- persisted bind mounts ----" && findmnt -rn -o TARGET | grep -E "^/(home|var|etc|root)/" | sort',
+    ]
+    return [f"{prefix}{shlex.quote(step)}" if prefix else step for step in steps]
+
 report_unpersisted = {
     "id": "unpersisted",
     "name": "Report Unpersisted Data",
-    "description": "List what sits on the rolled-back datasets and would not survive a reboot.",
+    "description": "List what sits on the rolled-back root and home, and would not survive a reboot.",
     # tree -x stays on one filesystem, and every persisted path is a bind mount from
-    # another dataset, so what it walks is exactly what the rollback discards.
-    # --du without -L, because a depth limit totals only the levels it prints.
+    # somewhere else, so what it walks is exactly what the rollback discards. That holds
+    # for btrfs too: each subvolume gets its own anonymous device number.
     "commands": [
-        'echo "---- <HOSTNAME>: rolled-back datasets ----" && sudo zfs list -o name,used,mountpoint root-pool-<HOSTNAME>/root root-pool-<HOSTNAME>/root/home',
-        'echo "---- / ----" && sudo tree -x -a --du -h --sort=size / 2>/dev/null | sed -n "1,40p;$p"',
-        'echo "---- /home ----" && sudo tree -x -a --du -h --sort=size /home 2>/dev/null | sed -n "1,40p;$p"',
-        'echo "---- persisted bind mounts ----" && findmnt -rn -o TARGET | grep -E "^/(home|var|etc|root)/" | sort',
+        get_unpersisted_commands
     ],
     "run_on_remote": True
 }

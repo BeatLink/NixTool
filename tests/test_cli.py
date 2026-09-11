@@ -633,3 +633,50 @@ def test_generations_can_be_driven_from_flags(config_file, capsys):
     out = capsys.readouterr().out
     assert "--delete-generations old" in out
     assert "nix-collect-garbage -d" in out
+
+
+# --- the trimmed menu ------------------------------------------------------
+
+def test_preview_and_purge_are_off_the_menu():
+    """Generation work goes through manage-generations now."""
+    listed = {registry.qualified_id(p, n) for p, n in registry.iter_commands()}
+    assert "maintenance/preview-generations" not in listed
+    assert "maintenance/purge-generations" not in listed
+    assert "maintenance/manage-generations" in listed
+
+
+def test_run_all_still_prunes_generations():
+    """They were removed from the menu, not from the composite that used them."""
+    node = registry.find_command("run-all")
+    plan = resolver.build_plan(
+        node, {"user": "admin", "hosts": {"alpha": "10.0.0.1"}}, ["alpha"],
+        {"ACTION": "switch"},
+    )
+    joined = " ".join(command for _, command in plan)
+    assert "--list-generations" in joined
+    assert "--delete-generations old" in joined
+    assert "nix-collect-garbage -d" in joined
+
+
+def test_the_unpersisted_report_runs_on_the_selected_host():
+    cfg = {"user": "admin", "hosts": {"alpha": "10.0.0.1"}}
+    node = registry.find_command("unpersisted")
+    plan = resolver.build_plan(node, cfg, ["alpha"], {})
+    assert [host for host, _ in plan] == ["alpha"] * 4
+    # Every step reads the host's own mounts, so a bare one would report this machine.
+    assert all(command.startswith("ssh admin@10.0.0.1 ") for _, command in plan)
+
+
+def test_the_unpersisted_report_covers_both_storage_backends():
+    commands = commands_module.get_unpersisted_commands({}, {}, None)
+    roots = commands[0]
+    assert "zfs list -o name,used,mountpoint" in roots
+    assert "btrfs subvolume list" in roots
+    # The roots come off the mounts; a pool name would only fit the ZFS hosts.
+    assert "root-pool-" not in roots
+
+
+def test_the_unpersisted_tree_totals_are_not_eaten_by_the_shell():
+    # sed -n "1,40p;$p" expands $p to nothing, dropping the "used in" line.
+    commands = commands_module.get_unpersisted_commands({}, {}, None)
+    assert all("sed -n '1,40p;$p'" in command for command in commands[1:3])

@@ -367,7 +367,7 @@ with no arguments, but lets you pass `-c` unambiguously.
 | `garbage-collect` | `nix-collect-garbage -d` | ✓ | ✓ | – |
 | `manage-generations` | Lists a host's generations, then removes or duplicates the ones you pick | ✓ | ✓ | `SYSTEM_GENERATIONS`, `USER_GENERATIONS`, `DUPLICATE_GENERATION`, `RUN_GC` |
 | `run-all` | Flake update → rebuild → preview → purge → GC | ✓ | ✓ | `ACTION` |
-| `unpersisted` | Lists what sits on the rolled-back datasets and would not survive a reboot | ✓ | – | – |
+| `unpersisted` | Lists what sits on the rolled-back root and home, ZFS or btrfs, and would not survive a reboot | ✓ | – | – |
 | `inspect` | Launches the nix-inspect TUI against `flake_path` | – | – | – |
 | `install-nixos` | Provisions a host with nixos-anywhere, wiping its disks | ✓ | ✓ | `SSH_TARGET`, `SSH_PASSWORD`, `SSH_HOST_KEY`, `SSH_INITRD_KEY`, `ENCRYPTION_KEY` |
 | `install-local` | Installs a host onto a disk attached to this machine | ✓ | ✓ | `TARGET_DISK`, `SSH_HOST_KEY`, `SSH_INITRD_KEY`, `ENCRYPTION_KEY` |
