@@ -95,7 +95,7 @@ nix_rebuild = {
     "name": "Run Nixos Rebuild",
     "description": "Build and activate a host configuration from the flake.",
     "commands": [
-        "nixos-rebuild --sudo --no-reexec --show-trace --flake <FLAKEPATH>#<HOSTNAME> --target-host <USER>@<HOSTURL> <ACTION>"
+        "nixos-rebuild --sudo --no-reexec --show-trace --use-substitutes --flake <FLAKEPATH>#<HOSTNAME> --target-host <USER>@<HOSTURL> <ACTION>"
     ],
     "menu_variables": {
         "ACTION": {
