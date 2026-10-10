@@ -361,7 +361,7 @@ with no arguments, but lets you pass `-c` unambiguously.
 |---|---|:--:|:--:|---|
 | `flake-update` | `nix flake update --refresh` | – | – | – |
 | `package-status` | A package's version on master, unstable and stable, with hydra's build of each | – | – | `PACKAGE`, `SYSTEM` |
-| `export-dconf` | Dumps every dconf path listed in the flake's `dconf-settings.json` files back into the flake | – | – | – |
+| `export-dconf` | Dumps every dconf path listed in the flake's `dconf-settings.json` files back into the flake, leaving out any key or directory named in that file's `dconf_ignore` list | – | – | – |
 | `rebuild` | `nixos-rebuild` against `<FLAKEPATH>#<HOSTNAME>` over SSH | ✓ | – | `ACTION` |
 | `rebuild-offline` | Activates a generation on a host whose disk is attached to this machine | ✓ | ✓ | `ENCRYPTION_KEY` |
 | `garbage-collect` | `nix-collect-garbage -d` | ✓ | ✓ | – |

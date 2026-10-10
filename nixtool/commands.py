@@ -1,6 +1,7 @@
 import json
 import pathlib
 import shlex
+import sys
 
 from . import generations
 
@@ -13,6 +14,8 @@ nix_flake_update = {
     ],
     "run_on_remote": False
 }
+
+FILTER_SCRIPT = pathlib.Path(__file__).with_name("dconf_filter.py")
 
 def get_dconf_commands(config, values=None, hostname=None):
     """One `dconf dump` per exported path, read locally or over ssh.
@@ -34,6 +37,12 @@ def get_dconf_commands(config, values=None, hostname=None):
     No dbus or XDG_RUNTIME_DIR is set for the remote side. ``dconf dump`` reads
     the user's gvdb database directly rather than going through the dconf
     service, so it works in a plain non-login ssh session; writes would not.
+
+    A ``dconf_ignore`` list names keys to leave out, such as window sizes an app
+    rewrites on every close; an entry ending in ``/`` leaves out a whole directory:
+
+        {"dconf_exports": ["/org/gtk/settings/"],
+         "dconf_ignore": ["/org/gtk/settings/file-chooser/window-size"]}
     """
     flake_path = config.get("flake_path") if isinstance(config, dict) else None
     if not flake_path:
@@ -71,13 +80,19 @@ def get_dconf_commands(config, values=None, hostname=None):
             target = f"{user}@{url}" if user else url
             prefix = f"ssh {shlex.quote(target)} "
 
+        ignored = data.get("dconf_ignore", [])
         for dconf_path in data.get("dconf_exports", []):
             output_name = f"{dconf_path.strip('/').replace('/', '.')}.dconf"
             target_file = (config_path.parent / output_name).relative_to(flake_root)
-            queue.append(
-                f"{prefix}dconf dump {shlex.quote(dconf_path)}"
-                f" > ./{shlex.quote(str(target_file))}"
-            )
+            dump = f"{prefix}dconf dump {shlex.quote(dconf_path)}"
+            relevant = [entry for entry in ignored if entry.startswith(dconf_path)]
+            if relevant:
+                # pipefail keeps a failed dump from passing as an empty, successful export
+                dump = "set -o pipefail; " + " ".join(
+                    [dump, "|", shlex.quote(sys.executable), shlex.quote(str(FILTER_SCRIPT)),
+                     shlex.quote(dconf_path), *map(shlex.quote, relevant)]
+                )
+            queue.append(f"{dump} > ./{shlex.quote(str(target_file))}")
     return queue if queue else ["echo 'No localized dconf targets found.'"]
 
 export_dconf = {

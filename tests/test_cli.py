@@ -73,6 +73,55 @@ def test_dconf_export_with_an_unknown_host_does_not_fall_back_to_local(tmp_path)
     assert "dconf dump" not in commands[0]
 
 
+def test_dconf_export_pipes_through_the_filter_only_for_ignored_keys(tmp_path):
+    config = _dconf_flake(
+        tmp_path,
+        {
+            "dconf_exports": ["/org/example/", "/org/other/"],
+            "dconf_ignore": ["/org/example/dialog/window-size"],
+        },
+    )
+    filtered, plain = commands_module.get_dconf_commands(config)
+    assert filtered.startswith("set -o pipefail; dconf dump /org/example/ | ")
+    assert filtered.endswith(
+        "dconf_filter.py /org/example/ /org/example/dialog/window-size"
+        " > ./nix/app/org.example.dconf"
+    )
+    assert plain == "dconf dump /org/other/ > ./nix/app/org.other.dconf"
+
+
+def test_dconf_filter_drops_keys_directories_and_emptied_sections():
+    from nixtool.dconf_filter import filter_dump
+
+    dump = (
+        "[/]\ntop=1\n\n"
+        "[dialog]\nshow-hidden=true\nwindow-size=(1915, 952)\n\n"
+        "[cache]\nlast=2\n\n"
+        "[cache/deep]\nmore=3\n\n"
+        "[sizes]\nwindow-size=(1, 1)\n"
+    )
+    ignored = [
+        "/org/example/dialog/window-size",
+        "/org/example/cache/",
+        "/org/example/sizes/window-size",
+    ]
+    assert filter_dump(dump, "/org/example/", ignored) == (
+        "[/]\ntop=1\n\n[dialog]\nshow-hidden=true\n"
+    )
+
+
+def test_dconf_filter_runs_as_a_script(tmp_path):
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, str(commands_module.FILTER_SCRIPT), "/org/example/",
+         "/org/example/a/b"],
+        input="[a]\nb=1\nc=2\n", capture_output=True, text=True, check=True,
+    )
+    assert result.stdout == "[a]\nc=2\n"
+
+
 def test_dconf_export_reports_missing_flake_path():
     assert commands_module.get_dconf_commands({}) == [
         "echo 'No flake_path configured; cannot locate dconf targets.'"
