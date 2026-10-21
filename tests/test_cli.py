@@ -444,6 +444,62 @@ def test_host_value_file_overrides_the_shared_one(tmp_path, capsys, monkeypatch)
     assert resolved["PASSPHRASE"] == str(per_host)
 
 
+def _fake_sops(tmp_path, monkeypatch, script):
+    """Put a stand-in `sops` on PATH that runs the given shell body."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    sops = bin_dir / "sops"
+    sops.write_text("#!/bin/sh\n" + script)
+    sops.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+
+
+def test_sops_value_from_config_is_used(tmp_path, capsys, monkeypatch):
+    flake = tmp_path / "flake"
+    _fake_sops(tmp_path, monkeypatch, 'echo "$4 $3" > "$0.args"; printf fromsops\n')
+    path = tmp_path / "nixtool-config.json"
+    path.write_text(json.dumps({
+        "flake_path": str(flake),
+        "hosts": {"alpha": "10.0.0.1"},
+        "host_sops_values": {"alpha": {"PASSPHRASE": {"file": "secrets/alpha.yaml", "key": "zfs_passphrase"}}},
+    }))
+    monkeypatch.setenv("NIXTOOL_CONFIG", str(path))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    code = main([
+        "run", "format-data-drive", "--host", "alpha",
+        "--data-drive", "/dev/sdb", "--mirror-drive", "none", "-n",
+    ])
+    out = capsys.readouterr().out
+    assert code == EXIT_OK
+    assert "PASSPHRASE = ********" in out
+    assert (tmp_path / "bin" / "sops.args").read_text().split() == [str(flake / "secrets/alpha.yaml"), '["zfs_passphrase"]']
+
+
+def test_sops_value_strips_only_the_trailing_newline(tmp_path, monkeypatch):
+    _fake_sops(tmp_path, monkeypatch, "printf 'line one\\nline two\\n'\n")
+    assert secrets.read_sops_value("/abs/file.yaml", "key") == "line one\nline two"
+
+
+def test_sops_failure_is_reported(tmp_path, monkeypatch):
+    _fake_sops(tmp_path, monkeypatch, "echo 'Error getting data key: 0 successful groups required' >&2; exit 128\n")
+    with pytest.raises(secrets.SecretError, match="0 successful groups"):
+        secrets.read_sops_value("/abs/file.yaml", "key")
+
+
+def test_value_file_beats_a_sops_value(tmp_path, monkeypatch):
+    declared = tmp_path / "declared"
+    declared.write_text("from-file\n")
+    _fake_sops(tmp_path, monkeypatch, "printf from-sops\n")
+    config = {
+        "hosts": {"alpha": "10.0.0.1"},
+        "value_files": {"PASSPHRASE": str(declared)},
+        "sops_values": {"PASSPHRASE": {"file": "/abs/file.yaml", "key": "k"}},
+    }
+    from nixtool import config as config_mod
+    assert config_mod.value_files(config, "alpha")["PASSPHRASE"] == str(declared)
+    assert config_mod.sops_values(config, "alpha")["PASSPHRASE"]["key"] == "k"
+
+
 def test_explicit_flag_beats_a_config_value_file(tmp_path, capsys, monkeypatch):
     declared = tmp_path / "declared"
     declared.write_text("from-config\n")

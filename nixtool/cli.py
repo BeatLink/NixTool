@@ -78,6 +78,7 @@ def collect_values(
     """
     variables = registry.collect_variables(node)
     declared_files = config_mod.value_files(cfg or {}, hostname)
+    declared_sops = config_mod.sops_values(cfg or {}, hostname)
     declared_literals = config_mod.declared_values(cfg or {}, hostname)
     values = {}
 
@@ -122,6 +123,13 @@ def collect_values(
         declared = declared_files.get(name)
         if declared:
             value = secrets.read_value_file(declared)
+            resolver.validate_choice(name, spec, value)
+            values[name] = value
+            continue
+
+        sops_ref = declared_sops.get(name)
+        if sops_ref:
+            value = secrets.read_sops_value(sops_ref["file"], sops_ref["key"], (cfg or {}).get("flake_path"))
             resolver.validate_choice(name, spec, value)
             values[name] = value
             continue

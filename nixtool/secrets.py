@@ -9,6 +9,7 @@ file, stdin, environment, or an interactive prompt.
 import getpass
 import os
 import pathlib
+import subprocess
 import sys
 
 SECRET_TYPES = {"password", "textarea"}
@@ -42,6 +43,31 @@ def read_value_file(path: str) -> str:
             data = target.read_text()
         except OSError as exc:
             raise SecretError(f"cannot read value file '{path}': {exc}") from exc
+    return data[:-1] if data.endswith("\n") else data
+
+
+def read_sops_value(file: str, key: str, base_dir: str | None = None) -> str:
+    """Decrypt one key from a sops file with the invoking user's age key.
+
+    sops finds the key the usual way (SOPS_AGE_KEY_FILE, SOPS_AGE_KEY_CMD or
+    ~/.config/sops/age/keys.txt), so nixtool never handles the key itself.
+    """
+    target = pathlib.Path(file).expanduser()
+    if not target.is_absolute() and base_dir:
+        target = pathlib.Path(base_dir).expanduser() / target
+    try:
+        result = subprocess.run(
+            ["sops", "--decrypt", "--extract", f'["{key}"]', str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise SecretError(f"cannot run sops for '{target}': {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip().splitlines()[-1:] or ["no output"]
+        raise SecretError(f"sops could not decrypt '{key}' from '{target}': {detail[0]}")
+    data = result.stdout
     return data[:-1] if data.endswith("\n") else data
 
 

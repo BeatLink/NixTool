@@ -553,9 +553,9 @@ cannot be unlocked at boot by any amount of configuration -- clevis will decrypt
 the right secret from tang and ZFS will reject it.
 
 So `PASSPHRASE` must be byte-identical to the `zfs_passphrase` in that host's
-sops file. Declare it in nixtool's config as a `value_files` entry pointing at
-the decrypted secret rather than typing it, which is both exact and keeps it off
-the command line.
+sops file. Declare it in nixtool's config as a `sops_values` entry naming that
+file and key (or a `value_files` entry pointing at the decrypted secret) rather
+than typing it, which is both exact and keeps it off the command line.
 
 If a pool already exists with the wrong passphrase and you still know it,
 `zfs change-key` is cheaper than reformatting:

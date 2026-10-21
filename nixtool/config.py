@@ -84,6 +84,33 @@ def value_files(config: dict, hostname: str | None = None) -> dict:
     return _merged(config, "value_files", "host_value_files", hostname)
 
 
+def sops_values(config: dict, hostname: str | None = None) -> dict:
+    """Variable name -> ``{"file": ..., "key": ...}`` naming a value inside a sops file.
+
+    nixtool decrypts these itself at run time with the invoking user's age key, so
+    no host key has to be a recipient of the file just so nixtool can read it. A
+    relative ``file`` is taken from the flake path.
+
+    ``sops_values`` applies to every host; ``host_sops_values.<hostname>``
+    overrides it per host.
+    """
+    resolved = {}
+    shared = config.get("sops_values")
+    if isinstance(shared, dict):
+        resolved.update({k: v for k, v in shared.items() if _is_sops_ref(v)})
+    per_host = config.get("host_sops_values")
+    if hostname and isinstance(per_host, dict):
+        entry = per_host.get(hostname)
+        if isinstance(entry, dict):
+            resolved.update({k: v for k, v in entry.items() if _is_sops_ref(v)})
+    return resolved
+
+
+def _is_sops_ref(value) -> bool:
+    """Whether a config entry names both a sops file and a key in it."""
+    return isinstance(value, dict) and isinstance(value.get("file"), str) and isinstance(value.get("key"), str)
+
+
 def declared_values(config: dict, hostname: str | None = None) -> dict:
     """Variable name -> literal value, from the config file.
 

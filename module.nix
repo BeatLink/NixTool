@@ -6,6 +6,8 @@
 # Credentials are named by *path*, never by value, so agenix, systemd
 # credentials or a file placed by hand all work. `sops` is a convenience on top
 # of that, resolving secret names into paths; using it requires sops-nix.
+# `sopsValues` instead names a key in a sops file that nixtool decrypts itself
+# with the invoking user's age key, so no host key has to be a recipient.
 
 self:
 {
@@ -18,6 +20,21 @@ let
   cfg = config.programs.nixtool;
 
   variableFiles = lib.types.attrsOf lib.types.str;
+
+  sopsReferences = lib.types.attrsOf (
+    lib.types.submodule {
+      options = {
+        file = lib.mkOption {
+          type = lib.types.str;
+          description = "sops file holding the value; a relative path is taken from {option}`flakePath`.";
+        };
+        key = lib.mkOption {
+          type = lib.types.str;
+          description = "Top-level key of the value inside that file.";
+        };
+      };
+    }
+  );
 
   sopsPaths = lib.mapAttrs (_: secret: config.sops.secrets.${secret}.path);
 
@@ -41,7 +58,9 @@ let
     // lib.optionalAttrs (cfg.values != { }) { values = cfg.values; }
     // lib.optionalAttrs (valueFiles != { }) { value_files = valueFiles; }
     // lib.optionalAttrs (cfg.hostValues != { }) { host_values = cfg.hostValues; }
-    // lib.optionalAttrs (hostValueFiles != { }) { host_value_files = hostValueFiles; };
+    // lib.optionalAttrs (hostValueFiles != { }) { host_value_files = hostValueFiles; }
+    // lib.optionalAttrs (cfg.sopsValues != { }) { sops_values = cfg.sopsValues; }
+    // lib.optionalAttrs (cfg.hostSopsValues != { }) { host_sops_values = cfg.hostSopsValues; };
 in
 {
   options.programs.nixtool = {
@@ -112,6 +131,27 @@ in
       description = "Per-host {option}`valueFiles`, overriding the shared ones.";
     };
 
+    sopsValues = lib.mkOption {
+      type = sopsReferences;
+      default = { };
+      example = lib.literalExpression ''{ SSH_PASSWORD = { file = "secrets/admin/install.yaml"; key = "ssh_password"; }; }'';
+      description = ''
+        Variable name to a key in a sops file, applied to every host. nixtool
+        runs `sops --decrypt` itself when the value is needed, with the age key
+        of whoever runs it, so only that user has to be able to decrypt the file.
+        Ranks below {option}`valueFiles`.
+      '';
+    };
+
+    hostSopsValues = lib.mkOption {
+      type = lib.types.attrsOf sopsReferences;
+      default = { };
+      example = lib.literalExpression ''
+        { alpha = { ENCRYPTION_KEY = { file = "secrets/alpha/clevis.yaml"; key = "zfs_passphrase"; }; }; }
+      '';
+      description = "Per-host {option}`sopsValues`, overriding the shared ones.";
+    };
+
     sops = {
       enable = lib.mkEnableOption "sourcing credential paths from sops-nix secrets";
 
@@ -156,10 +196,10 @@ in
       assertions = [
         {
           assertion = lib.all (host: cfg.hosts ? ${host}) (
-            lib.attrNames cfg.hostValues ++ lib.attrNames hostValueFiles
+            lib.attrNames cfg.hostValues ++ lib.attrNames hostValueFiles ++ lib.attrNames cfg.hostSopsValues
           );
           message =
-            "programs.nixtool: hostValues/hostValueFiles name hosts that are not in "
+            "programs.nixtool: hostValues/hostValueFiles/hostSopsValues name hosts that are not in "
             + "programs.nixtool.hosts, so they would never be used. Known hosts: "
             + (lib.concatStringsSep ", " (lib.attrNames cfg.hosts));
         }
@@ -189,7 +229,8 @@ in
         pkgs.gnutar
         pkgs.xz
         pkgs.nix-inspect
-      ];
+      ]
+      ++ lib.optional (cfg.sopsValues != { } || cfg.hostSopsValues != { }) pkgs.sops;
       environment.etc."nixtool/nixtool-config.json".text = builtins.toJSON configFile;
     })
 
